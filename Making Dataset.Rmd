@@ -1,0 +1,701 @@
+---
+title: "Making Dataset"
+author: "Mubashir Sultan"
+date: "2/10/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r libraries and initial setup,  include=FALSE}
+# loading libraries
+library(here)
+library(readxl)
+library(writexl)
+library(tidyverse)
+
+
+```
+
+
+The final dataset comprises of three datasets (collection times) which have been merged and prolific ids anonomised. the df that is loaded next has hence merged and anonomised the dfs.
+
+```{r load df}
+
+df_all <- read_excel(here::here("Data", "Raw", "raw_data.xlsx"), sheet = 1, col_names = TRUE, col_types = NULL)
+
+```
+
+
+data that is collected but not needed for analysis 
+```{r not needed}
+
+#  removing variables that are not needed
+not_needed <- c("backbutton", 
+                "nextbutton",
+                "nt_browser_type",
+                "nt_browser_with_version",
+                "nt_now",
+                "nt_operating_system",
+                "nt_precision",
+                "nt_RAF",
+                "nt_screen_height",
+                "nt_screen_width",
+                "nt_session_state",
+                "nt_screen_state",
+                "nt_window_height",
+                "nt_window_width", 
+                "scaleQuestionOne", 
+                "scaleQuestionTwo", 
+                "scaleQuestionThree", 
+                "scaleQuestionFour", 
+                "scaleQuestionFive", 
+                "scaleQuestionSix", 
+                "scaleQuestionSeven", 
+                "scaleQuestionEight", 
+                "securityMeasure",
+                "SESSION_ID", 
+                "STUDY_ID",
+                "items_correct",
+                "trial_images_first",
+                "trial_images_second",
+                "screen_order",
+                "trial_order_block1",
+                "item_order_block1",
+                "trial_order_block2",
+                "item_order_block2",
+                "rand_shuffle_buttons",
+                "understoodnButton",
+                "consentButton",
+                "nextButtonConsent",
+                "comp_check_counter1",
+                "comp_check_counter2",
+                "comp_check_counter3",
+                "comp_check_counter4",
+                "trial_number_practice_trial",
+                "accuracy_timer_practice_trial",
+                "accuracy_scale_practice_trial",
+                "familarity_scale_practice_trial",
+                "confidence_timer_practice_trial",
+                "confidence_scale_practice_trial",
+                "familarity_timer_practice_trial")
+
+
+# removing not needed
+df_all <- df_all %>% dplyr::filter(!Name %in% not_needed)
+
+```
+
+
+adding a participant identifier that starts off participant number at 1
+
+```{r unique identifier}
+
+# removing unnecessary columns data
+df_all_1 <- df_all[, 5:7]
+
+
+# adding ID number column relative to subject number
+df_all_1$ID <- df_all_1$Subject
+unique_subjects <- unique(df_all_1$Subject)
+number_subjects <- seq(1,length(unique_subjects), 1)
+
+for (i in 1:length(unique_subjects)) {
+  
+  df_all_1$ID[df_all_1$Subject == unique_subjects[i]] <- number_subjects[i]
+
+}
+
+# re-ordering rows
+# rownames(df_all_1) <- seq(1, length(df_all_1$Subject), 1)
+
+#sort by submission id. 
+# df_all_1 <- df_all_1[order(df_all_1$Subject),]
+
+df_all <- df_all_1
+
+```
+
+
+837 participants in total to begin with.
+```{r changing to wide format}
+
+# changing to wide format
+df_all <- df_all %>% pivot_wider(names_from = Name, values_from = Value, id_cols = c(ID, Subject))
+
+```
+
+
+```{r making df tidy ready,  include=FALSE}
+# long format
+df_all.long <- pivot_longer(df_all, !c("Subject", "ID", "PROLIFIC_PID", "timerFirstBlock", "timerSecondBlock", "age", "gender", "political_identification_scale", "support_biden", "support_trump", "optionalFeedback", "overallTime", "CRT_1", "CRT_2", "CRT_3", "CRT_4", "CRT_5", "condition", "collection", "political_interest_1", "political_interest_2", "news_consumption_1", "news_consumption_2", "bonus"), names_to = "measurement", values_to = "value")
+
+# seems like there is a minor error with how measurement for item number 116 and 173 have been encoded via the experiment (only for trial number). they are flipped. so i will re-flip them now.
+df_all.long$measurement <- str_replace_all(df_all.long$measurement, "trial_number_116", "trial_number_one_one_six")
+df_all.long$measurement <- str_replace_all(df_all.long$measurement, "trial_number_173", "trial_number_one_seven_three")
+df_all.long$measurement <- str_replace_all(df_all.long$measurement, "trial_number_one_one_six", "trial_number_173")
+df_all.long$measurement <- str_replace_all(df_all.long$measurement, "trial_number_one_seven_three", "trial_number_116")
+
+# this long format has very many data that are not required, so only keeping those that are needed. plus all the relevant data is in two columns and we don't want that, so i will break these apart now too (they should all be the same length. we can then join).
+
+# accuracy scale
+df_all.long.accuracy_scale <- df_all.long %>% filter(
+  str_detect(measurement, "accuracy_scale_")
+)
+# adding columns names so they stay discernible
+colnames(df_all.long.accuracy_scale)[colnames(df_all.long.accuracy_scale) == "value"] <- "accuracy_scale"
+
+# keeping the relevant columns in mind after the first df (accuracy_scale).
+# accuracy timer
+df_all.long.accuracy_timer <- df_all.long %>% filter(
+  str_detect(measurement, "accuracy_timer_")
+)
+colnames(df_all.long.accuracy_timer)[colnames(df_all.long.accuracy_timer) == "value"] <- "accuracy_timer"
+df_all.long.accuracy_timer <- df_all.long.accuracy_timer[, c("ID", "measurement", "accuracy_timer")]
+
+
+# confidence scale
+df_all.long.confidence_scale <- df_all.long %>% filter(
+  str_detect(measurement, "confidence_scale_")
+)
+colnames(df_all.long.confidence_scale)[colnames(df_all.long.confidence_scale) == "value"] <- "confidence_scale"
+df_all.long.confidence_scale <- df_all.long.confidence_scale[, c("ID", "measurement", "confidence_scale")]
+  
+  
+# confidence timer
+df_all.long.confidence_timer <- df_all.long %>% filter(
+  str_detect(measurement, "confidence_timer_")
+)
+colnames(df_all.long.confidence_timer)[colnames(df_all.long.confidence_timer) == "value"] <- "confidence_timer"
+df_all.long.confidence_timer <- df_all.long.confidence_timer[, c("ID", "measurement", "confidence_timer")]
+
+
+# familarity scale
+df_all.long.familarity_scale <- df_all.long %>% filter(
+  str_detect(measurement, "familarity_scale_")
+)
+colnames(df_all.long.familarity_scale)[colnames(df_all.long.familarity_scale) == "value"] <- "familarity_scale"
+df_all.long.familarity_scale <- df_all.long.familarity_scale[, c("ID", "measurement", "familarity_scale")]
+
+  
+# familarity timer
+df_all.long.familarity_timer <- df_all.long %>% filter(
+  str_detect(measurement, "familarity_timer_")
+)
+colnames(df_all.long.familarity_timer)[colnames(df_all.long.familarity_timer) == "value"] <- "familarity_timer"
+df_all.long.familarity_timer <- df_all.long.familarity_timer[, c("ID", "measurement", "familarity_timer")]
+
+  
+# trial number
+df_all.long.trial_number <- df_all.long %>% filter(
+  str_detect(measurement, "trial_number_")
+)
+colnames(df_all.long.trial_number)[colnames(df_all.long.trial_number) == "value"] <- "trial_number"
+df_all.long.trial_number <- df_all.long.trial_number[, c("ID", "measurement", "trial_number")]
+
+
+
+# checking to see columns match after merge
+# grab last digit and compare
+table(str_sub(df_all.long.accuracy_scale$measurement,-2) == str_sub(df_all.long$measurement[str_detect(df_all.long$measurement, "accuracy_timer_")],-2))
+table(str_sub(df_all.long.accuracy_timer$measurement,-2) == str_sub(df_all.long$measurement[str_detect(df_all.long$measurement, "confidence_scale_")],-2))
+table(str_sub(df_all.long.confidence_scale$measurement,-2) == str_sub(df_all.long$measurement[str_detect(df_all.long$measurement, "confidence_timer_")],-2))
+table(str_sub(df_all.long.confidence_timer$measurement,-2) == str_sub(df_all.long$measurement[str_detect(df_all.long$measurement, "familarity_scale_")],-2))
+table(str_sub(df_all.long.familarity_scale$measurement,-2) == str_sub(df_all.long$measurement[str_detect(df_all.long$measurement, "familarity_timer_")],-2))
+table(str_sub(df_all.long.familarity_timer$measurement,-2) == str_sub(df_all.long$measurement[str_detect(df_all.long$measurement, "trial_number_")],-2))
+
+
+# now to combine the dfs, but with only 
+df_all.tidy <- data.frame(df_all.long.accuracy_scale, 
+                          df_all.long.accuracy_timer[,"accuracy_timer"],
+                          df_all.long.confidence_scale[,"confidence_scale"],
+                          df_all.long.confidence_timer[,"confidence_timer"],
+                          df_all.long.familarity_scale[,"familarity_scale"],
+                          df_all.long.familarity_timer[,"familarity_timer"],
+                          df_all.long.trial_number[,"trial_number"]
+                          )
+
+# changing colnames
+colnames(df_all.tidy)[colnames(df_all.tidy) == "df_all.long.accuracy_timer....accuracy_timer.."] <- "accuracy_timer"
+colnames(df_all.tidy)[colnames(df_all.tidy) == "df_all.long.confidence_scale....confidence_scale.."] <- "confidence_scale"
+colnames(df_all.tidy)[colnames(df_all.tidy) == "df_all.long.confidence_timer....confidence_timer.."] <- "confidence_timer"
+colnames(df_all.tidy)[colnames(df_all.tidy) == "df_all.long.familarity_scale....familarity_scale.."] <- "familarity_scale"
+colnames(df_all.tidy)[colnames(df_all.tidy) == "df_all.long.familarity_timer....familarity_timer.."] <- "familarity_timer"
+colnames(df_all.tidy)[colnames(df_all.tidy) == "df_all.long.trial_number....trial_number.."] <- "trial_number"
+
+
+
+# changing measurement column to item number as it includes relevant info
+colnames(df_all.tidy)[colnames(df_all.tidy) == "measurement"] <-"item_number"
+df_all.tidy$item_number <- str_replace(df_all.tidy$item_number, "accuracy_scale_", "")
+```
+
+
+when coding the experiment, a way to identify which items belong to which batch (there are two) was not included. so this is a little hack to get this info.
+
+```{r adding batch number as not included in experiment code,  include=FALSE}
+
+
+# # adding batch details 
+batch_1_items <- c("169", "141", "133", "127", "25", "39", "208", "218", "47", "147", "82", "204", "158", "151", "2", "157", "32", "191", "93", "200", "221", "137", "190", "205", "11", "12", "154", "210", "69", "98", "146", "125")
+
+batch_2_items <- c("86", "174", "71", "160", "186", "76", "102", "55", "57", "116", "120", "173", "94", "22", "124", "14", "182", "171", "3", "83", "214", "209", "26", "48", "189", "44", "118", "166", "103", "161", "10", "130")
+
+
+# whenever the item number matches that of an item number from the batch we add a "Batch X" qualifier 
+df_all.tidy <- df_all.tidy %>% mutate(batch = case_when(
+  item_number == batch_1_items[1] ~ "Batch 1",
+  item_number == batch_1_items[2] ~ "Batch 1",
+  item_number == batch_1_items[3] ~ "Batch 1",
+  item_number == batch_1_items[4] ~ "Batch 1",
+  item_number == batch_1_items[5] ~ "Batch 1",
+  item_number == batch_1_items[6] ~ "Batch 1",
+  item_number == batch_1_items[7] ~ "Batch 1",
+  item_number == batch_1_items[8] ~ "Batch 1",
+  item_number == batch_1_items[9] ~ "Batch 1",
+  item_number == batch_1_items[10] ~ "Batch 1",
+  item_number == batch_1_items[11] ~ "Batch 1",
+  item_number == batch_1_items[12] ~ "Batch 1",
+  item_number == batch_1_items[13] ~ "Batch 1",
+  item_number == batch_1_items[14] ~ "Batch 1",
+  item_number == batch_1_items[15] ~ "Batch 1",
+  item_number == batch_1_items[16] ~ "Batch 1",
+  item_number == batch_1_items[17] ~ "Batch 1",
+  item_number == batch_1_items[18] ~ "Batch 1",
+  item_number == batch_1_items[19] ~ "Batch 1",
+  item_number == batch_1_items[20] ~ "Batch 1",
+  item_number == batch_1_items[21] ~ "Batch 1",
+  item_number == batch_1_items[22] ~ "Batch 1",
+  item_number == batch_1_items[23] ~ "Batch 1",
+  item_number == batch_1_items[24] ~ "Batch 1",
+  item_number == batch_1_items[25] ~ "Batch 1",
+  item_number == batch_1_items[26] ~ "Batch 1",
+  item_number == batch_1_items[27] ~ "Batch 1",
+  item_number == batch_1_items[28] ~ "Batch 1",
+  item_number == batch_1_items[29] ~ "Batch 1",
+  item_number == batch_1_items[30] ~ "Batch 1",
+  item_number == batch_1_items[31] ~ "Batch 1",
+  item_number == batch_1_items[32] ~ "Batch 1",
+  item_number == batch_2_items[1] ~ "Batch 2",
+  item_number == batch_2_items[2] ~ "Batch 2",
+  item_number == batch_2_items[3] ~ "Batch 2",
+  item_number == batch_2_items[4] ~ "Batch 2",
+  item_number == batch_2_items[5] ~ "Batch 2",
+  item_number == batch_2_items[6] ~ "Batch 2",
+  item_number == batch_2_items[7] ~ "Batch 2",
+  item_number == batch_2_items[8] ~ "Batch 2",
+  item_number == batch_2_items[9] ~ "Batch 2",
+  item_number == batch_2_items[10] ~ "Batch 2",
+  item_number == batch_2_items[11] ~ "Batch 2",
+  item_number == batch_2_items[12] ~ "Batch 2",
+  item_number == batch_2_items[13] ~ "Batch 2",
+  item_number == batch_2_items[14] ~ "Batch 2",
+  item_number == batch_2_items[15] ~ "Batch 2",
+  item_number == batch_2_items[16] ~ "Batch 2",
+  item_number == batch_2_items[17] ~ "Batch 2",
+  item_number == batch_2_items[18] ~ "Batch 2",
+  item_number == batch_2_items[19] ~ "Batch 2",
+  item_number == batch_2_items[20] ~ "Batch 2",
+  item_number == batch_2_items[21] ~ "Batch 2",
+  item_number == batch_2_items[22] ~ "Batch 2",
+  item_number == batch_2_items[23] ~ "Batch 2",
+  item_number == batch_2_items[24] ~ "Batch 2",
+  item_number == batch_2_items[25] ~ "Batch 2",
+  item_number == batch_2_items[26] ~ "Batch 2",
+  item_number == batch_2_items[27] ~ "Batch 2",
+  item_number == batch_2_items[28] ~ "Batch 2",
+  item_number == batch_2_items[29] ~ "Batch 2",
+  item_number == batch_2_items[30] ~ "Batch 2",
+  item_number == batch_2_items[31] ~ "Batch 2",
+  item_number == batch_2_items[32] ~ "Batch 2",
+))
+
+# checking count (why is this the same?)
+table(df_all.tidy$batch)
+```
+
+
+it's time for some cleaning. keeping: 
+- only first attempt (no multiple entries)
+- those who have values for political identity for all participants
+- at least three CRT responses
+
+```{r multiple attemps removal,include=FALSE}
+
+# df with just data of one trial (equivalent to having a wide format dataset)
+one_trial <- df_all.tidy %>% dplyr::filter(trial_number == "6") #i choose trial number 6 because that is a trial where i don't have any missing data for any participant
+
+# list of participants who tried more than once, seen through prolific ID
+attempted_twice  <- data.frame(table(one_trial$PROLIFIC_PID))
+attempted_twice <- attempted_twice[attempted_twice$Freq > 1,]
+attempted_twice <- as.character(attempted_twice[["Var1"]])
+attempted_twice
+
+# listed now with subject id
+attempted_twice <- one_trial %>% filter(PROLIFIC_PID %in% attempted_twice) %>% select(Subject, PROLIFIC_PID)
+
+# sorting by subject number first, then prolific id
+attempted_twice <- attempted_twice[order(attempted_twice$Subject),]
+attempted_twice <- attempted_twice[order(attempted_twice$PROLIFIC_PID),]
+
+# keeping only first attempt
+attempted_twice <- attempted_twice[["Subject"]]
+attempted_twice <- attempted_twice[seq(1,18,2)]
+attempted_twice
+
+# removing those 9 participants from dataframe
+one_trial <- one_trial %>% dplyr::filter(!Subject %in% attempted_twice)
+df_all.tidy <- df_all.tidy %>% dplyr::filter(!Subject %in% attempted_twice)
+
+```
+
+
+
+```{r political identity missing removal,include=FALSE}
+
+#look through wide format to check for missing data
+political_identity_wide <- one_trial %>% select(Subject, political_identification_scale, CRT_1, CRT_2, CRT_3, CRT_4)
+
+
+# finding subject number of those with missing political identification
+political_identity_missing <- political_identity_wide$Subject[is.na(political_identity_wide$political_identification_scale)]
+
+# 5 in total, we will remove later
+political_identity_missing
+
+
+# removing those 5 participants from dataframe
+one_trial <- one_trial %>% dplyr::filter(!Subject %in% political_identity_missing)
+df_all.tidy <- df_all.tidy %>% dplyr::filter(!Subject %in% political_identity_missing)
+
+```
+
+
+```{r CRT missing removal, include=FALSE}
+# now with regards to CRT
+# need to count whether a participant has more than one missing value with CRT
+
+# converting  to long again for better counting of CRT
+CRT_long <- one_trial %>% select(Subject, ID, CRT_1, CRT_2, CRT_3, CRT_4)
+CRT_long <- pivot_longer(CRT_long, !c(ID, Subject), names_to = "measurement", values_to = "value")
+
+# finding those subjects with missing values
+CRT_missing <- CRT_long %>% filter(is.na(value))
+CRT_missing <- data.frame(table(CRT_missing$Subject))
+CRT_missing <- CRT_missing %>% filter(!Freq == 1)
+CRT_missing <- CRT_missing[["Var1"]]
+CRT_missing <- as.numeric(as.character(CRT_missing))
+
+# 26 in total with more than 1 CRT response missing
+CRT_missing
+
+# removing them from main df
+# removing those 5 participants from dataframe
+one_trial <- one_trial %>% dplyr::filter(!Subject %in% CRT_missing)
+df_all.tidy <- df_all.tidy %>% dplyr::filter(!Subject %in% CRT_missing)
+
+```
+
+
+now to remove those participants who failed attention checks.
+```{r attention check,  include=FALSE}
+
+# df for attention checks
+df_all.tidy.attention <- df_all.tidy %>% filter(item_number == "attention_check1" | item_number == "attention_check2")
+
+# checking to see if there are NA values
+attention_check_remove_1 <- df_all.tidy.attention %>% filter(is.na(accuracy_scale) |
+                                   is.na(confidence_scale) |
+                                   is.na(familarity_scale)
+                                   )
+
+# 2 people with missing data with attention check questions will be removed 
+attention_check_remove_1 <- attention_check_remove_1[["Subject"]]
+
+# removing participant with NA values for remainder of checking
+df_all.tidy.attention <- df_all.tidy.attention %>%
+  drop_na(accuracy_scale) %>%
+  drop_na(confidence_scale) %>%
+  drop_na(familarity_scale)
+
+# new summary columns
+df_all.tidy.attention$attention_check_accuracy <- NA
+df_all.tidy.attention$attention_check_confidence <- NA
+df_all.tidy.attention$attention_check_familarity <- NA
+
+for (i in 1:length(df_all.tidy.attention$item_number)) {
+
+  # accuracy scale
+  if (df_all.tidy.attention$item_number[i] == "attention_check1" && df_all.tidy.attention$accuracy_scale[i] == "Yes") {
+    df_all.tidy.attention$attention_check_accuracy[i] <- "Correct"
+  } else if (df_all.tidy.attention$item_number[i] == "attention_check2" && df_all.tidy.attention$accuracy_scale[i] == "No") {
+    df_all.tidy.attention$attention_check_accuracy[i] <- "Correct"
+  } else {
+    df_all.tidy.attention$attention_check_accuracy[i] <- "Incorrect"
+  }
+
+  # partisan scale
+  if (df_all.tidy.attention$item_number[i] == "attention_check1" && df_all.tidy.attention$confidence_scale[i] == 3) {
+    df_all.tidy.attention$attention_check_confidence[i] <- "Correct"
+  } else if (df_all.tidy.attention$item_number[i] == "attention_check2" && df_all.tidy.attention$confidence_scale[i] == 5) {
+    df_all.tidy.attention$attention_check_confidence[i] <- "Correct"
+  } else {
+    df_all.tidy.attention$attention_check_confidence[i] <- "Incorrect"
+  }
+
+  # familarity scale
+  if (df_all.tidy.attention$item_number[i] == "attention_check1" && df_all.tidy.attention$familarity_scale[i] == "Yes") {
+    df_all.tidy.attention$attention_check_familarity[i] <- "Correct"
+  } else if (df_all.tidy.attention$item_number[i] == "attention_check2" && df_all.tidy.attention$familarity_scale[i] == "No") {
+    df_all.tidy.attention$attention_check_familarity[i] <- "Correct"
+  } else {
+    df_all.tidy.attention$attention_check_familarity[i] <- "Incorrect"
+  }
+}
+
+df_all.tidy.attention$accuracy_scale <- as.factor(df_all.tidy.attention$accuracy_scale)
+df_all.tidy.attention$confidence_scale <- as.factor(df_all.tidy.attention$confidence_scale)
+df_all.tidy.attention$familarity_scale <- as.factor(df_all.tidy.attention$familarity_scale)
+df_all.tidy.attention$item_number <- as.factor(df_all.tidy.attention$item_number)
+
+
+# list of those who got attention check wrong
+attention_check_remove_2 <- df_all.tidy.attention %>%
+  dplyr::select(Subject, item_number, attention_check_accuracy, attention_check_confidence, attention_check_familarity) %>%
+  group_by(Subject) %>%
+  dplyr::filter(attention_check_accuracy == "Incorrect" | attention_check_confidence == "Incorrect" | attention_check_familarity == "Incorrect") %>%
+  count() %>%
+  dplyr::filter(n > 1)
+
+attention_check_remove_2 <- attention_check_remove_2[["Subject"]]
+
+# final list
+attention_check_remove <- c(attention_check_remove_1, attention_check_remove_2)
+
+# removing those 30 participants from dataframe
+one_trial <- one_trial %>% dplyr::filter(!Subject %in% attention_check_remove)
+df_all.tidy <- df_all.tidy %>% dplyr::filter(!Subject %in% attention_check_remove)
+```
+
+```{r removing attention check data from main df}
+
+# df without attention checks
+df_all.tidy <- df_all.tidy %>% filter(item_number != "attention_check1", item_number != "attention_check2")
+
+```
+
+
+these 4 have lots of missing data (152214, 152389, 152441, 152572) - not sure what to do with them? #COMMENT
+always responding with the same response
+
+```{r checking for always true or false for accuracy question}
+
+# checking for participants who always said accurate versus inaccurate
+#  if average is either 0 or 1, they they chose no or yes throughout
+check_all_true_or_false <- df_all.tidy %>%
+  drop_na(accuracy_scale) %>%
+  dplyr::select(Subject, item_number, accuracy_scale) %>%
+  group_by(Subject, item_number) %>%
+  dplyr::filter(!accuracy_scale %in% "undefined") %>%
+  mutate(accuracy_scale1 = case_when(accuracy_scale == "Yes" ~ 1,
+                                      accuracy_scale == "No" ~ 0)) %>%
+  group_by(Subject) %>%
+  summarise(mean_yes_no = mean(accuracy_scale1), count = n(), SD = sd(accuracy_scale1), se = (SD / (sqrt(count))))
+
+# checking to see how many don't have 32 responses 
+index_full_32 <- check_all_true_or_false %>% dplyr::filter(count != 32)
+index_full_32 <- index_full_32[["Subject"]]
+
+check_all_true_or_false <- check_all_true_or_false %>%
+  dplyr::filter(mean_yes_no == 0 | mean_yes_no == 1) %>%
+  dplyr::filter(SD == 0 | se == 0)
+
+# 4 participants who always responded either true of false
+check_all_true_or_false_remove <- check_all_true_or_false[["Subject"]]
+
+
+# checking for participants who always used one confidence scale response
+#  if average is either  1,2,3,4,5,6 and SD = 0, they they chose one option throughout
+check_all_confidence_ratings <- df_all.tidy %>%
+  dplyr::select(Subject, item_number, confidence_scale) %>%
+  drop_na(confidence_scale) %>%
+  group_by(Subject, item_number) %>%
+  dplyr::filter(!confidence_scale %in% "undefined")
+
+check_all_confidence_ratings <- check_all_confidence_ratings %>%
+  group_by(Subject) %>%
+  summarise(mean_confidence = mean(as.numeric(as.character(confidence_scale))), count = n(), SD = sd(as.numeric(as.character(confidence_scale))), se = (SD / (sqrt(count))))
+
+check_all_confidence_ratings <- check_all_confidence_ratings %>%
+  dplyr::filter(mean_confidence == 1 | mean_confidence == 2 | mean_confidence == 3 | mean_confidence == 4 | mean_confidence == 5 | mean_confidence == 6) %>%
+  dplyr::filter(SD == 0)
+
+# 3 participants who gave only one confidence score response
+check_all_confidence_ratings_remove <- check_all_confidence_ratings[["Subject"]]
+
+# combining both indexes
+low_effort_response_remove <- c(check_all_true_or_false_remove, check_all_confidence_ratings_remove)
+
+
+# removing those 7 participants from dataframe
+one_trial <- one_trial %>% dplyr::filter(!Subject %in% low_effort_response_remove)
+df_all.tidy <- df_all.tidy %>% dplyr::filter(!Subject %in% low_effort_response_remove)
+
+```
+
+as a final step we are going to add CRT data to the long df
+
+```{r creating a CRT dataset}
+
+CRT <- one_trial %>%
+  dplyr::select(Subject, CRT_1, CRT_2, CRT_3, CRT_4, CRT_5, condition)
+
+
+# creating a function to input right answer
+# CRT_1
+CRT_1_function <- function(response) {
+  verdict <- str_detect(response, "second|Second|SECOND|2")
+
+  return(verdict)
+}
+
+# CRT_2
+CRT_2_function <- function(response) {
+  verdict <- str_detect(response, "eight|Eight|EIGHT|8")
+
+  return(verdict)
+}
+
+# CRT_3
+CRT_3_function <- function(response) {
+  verdict <- str_detect(response, "zero|Zero|hole|Hole|HOLE|emply|Empty|EMPTY|no|No|NO|0")
+
+  return(verdict)
+}
+
+# CRT_4
+CRT_4_function <- function(response) {
+  verdict <- str_detect(response, "emily|Emily|EMILY")
+
+  return(verdict)
+}
+
+# scoring responses
+CRT <- CRT %>% mutate(CRT_1_Clean = ifelse(CRT_1_function(CRT_1) == TRUE, 1, 0),
+                      CRT_2_Clean = ifelse(CRT_2_function(CRT_2) == TRUE, 1, 0),
+                      CRT_3_Clean = ifelse(CRT_3_function(CRT_3) == TRUE, 1, 0),
+                      CRT_4_Clean = ifelse(CRT_4_function(CRT_4) == TRUE, 1, 0))
+
+CRT$CRT_5_Clean <- as.factor(CRT$CRT_5)
+
+# also for the larger dataset
+df_all.tidy <- df_all.tidy %>% mutate(CRT_1_Clean = ifelse(CRT_1_function(CRT_1) == TRUE, 1, 0),
+                      CRT_2_Clean = ifelse(CRT_2_function(CRT_2) == TRUE, 1, 0),
+                      CRT_3_Clean = ifelse(CRT_3_function(CRT_3) == TRUE, 1, 0),
+                      CRT_4_Clean = ifelse(CRT_4_function(CRT_4) == TRUE, 1, 0))
+
+df_all.tidy$CRT_5_Clean <- as.factor(df_all.tidy$CRT_5)
+
+CRT_Clean <- CRT %>% dplyr::select(Subject, CRT_1_Clean, CRT_2_Clean, CRT_3_Clean, CRT_4_Clean, CRT_5_Clean, condition)
+
+# counting number of questions correct and number of questions incorrect
+CRT_Clean <- CRT_Clean %>% 
+  # mutate_at(vars(CRT_1_Clean,CRT_2_Clean,CRT_3_Clean,CRT_4_Clean), ~replace_na(., 0)) %>%
+  mutate(
+  total_correct = CRT_1_Clean + CRT_2_Clean + CRT_3_Clean + CRT_4_Clean
+  ) 
+
+
+# taking care of participants with missing numbers. here we get total score out of the questions they answered in total.
+CRT_Clean$total_correct[CRT_Clean$Subject == "152431"] <- 1
+CRT_Clean$total_correct[CRT_Clean$Subject == "154599"] <- 2
+
+
+# adding column for total answered to create percentages
+CRT_Clean <- CRT_Clean %>% dplyr::mutate(total_answered = 4)
+
+# manually changing total answered for those with less than 4 answered
+CRT_Clean$total_answered[CRT_Clean$Subject == "152431"] <- 3
+CRT_Clean$total_answered[CRT_Clean$Subject == "154599"] <- 3
+
+
+CRT_Clean <- CRT_Clean %>%
+  mutate(
+    CRT_proficiency = case_when(
+      total_correct >= 3 ~ 1,
+      total_correct <= 2 ~ 0,
+    )
+  ) %>%
+  select(Subject, condition, CRT_1_Clean, CRT_2_Clean, CRT_3_Clean, CRT_4_Clean, CRT_5_Clean, CRT_proficiency,total_correct, total_answered) %>% 
+  rename(CRT_1 = CRT_1_Clean, CRT_2 = CRT_2_Clean, CRT_3 = CRT_3_Clean, CRT_4 = CRT_4_Clean, CRT_5 = CRT_5_Clean) %>%
+  mutate(CRT_proficiency_binary = case_when(CRT_proficiency == 1 ~ "High",
+                                           CRT_proficiency == 0 ~ "Low"))
+
+# creating percentages
+CRT_Clean <- CRT_Clean %>% dplyr::mutate(percent_correct = (total_correct/total_answered))
+
+standard_CRT_Clean <- CRT_Clean %>%
+  summarise(mean = mean(percent_correct), SD = sd(percent_correct), two_SD = SD*2, count = n(), se = (SD / (sqrt(count))), median = median(percent_correct), min = min(percent_correct), max = max(percent_correct))
+
+# adding standardised values
+CRT_Clean <- CRT_Clean %>% dplyr::mutate(percent_correct_standard = (percent_correct - standard_CRT_Clean$mean[1])/standard_CRT_Clean$two_SD[1])
+
+
+CRT_subject_index <- CRT_Clean[["Subject"]]
+
+
+# string detect all of the values that are item number x and then add that to true_false of my df
+for (i in 1:length(CRT_subject_index)) {
+  # crt percentage 
+  df_all.tidy$CRT_percent[df_all.tidy$Subject == CRT_subject_index[i]] <- CRT_Clean$percent_correct[i]
+  # crt percentage standard
+  df_all.tidy$CRT_standard[df_all.tidy$Subject == CRT_subject_index[i]] <- CRT_Clean$percent_correct_standard[i]
+  # crt binary
+  df_all.tidy$CRT_binary[df_all.tidy$Subject == CRT_subject_index[i]] <- CRT_Clean$CRT_proficiency_binary[i]
+}
+
+# creating a long df
+CRT_Clean.long <- CRT_Clean %>%
+  dplyr::select(Subject, condition, CRT_1, CRT_2, CRT_3, CRT_4, CRT_5, percent_correct, percent_correct_standard,CRT_proficiency_binary) %>%
+  gather(CRT, response, -c(Subject, condition, percent_correct, percent_correct_standard, CRT_5, CRT_proficiency_binary))
+
+```
+
+
+
+ready to save for analyses.
+```{r final save,  include=FALSE}
+
+# before save, re-doing subject ID so it's in sequence.
+# adding ID number column relative to subject number
+unique_subjects <- unique(df_all.tidy$Subject)
+number_subjects <- seq(1,length(unique_subjects), 1)
+
+for (i in 1:length(unique_subjects)) {
+  
+  df_all.tidy$ID[df_all.tidy$Subject == unique_subjects[i]] <- number_subjects[i]
+
+}
+
+
+# renaming some columns for final dataset
+#please note familiarity has been throughout so that's why we rename here twice
+df_all.tidy <- df_all.tidy %>%
+  rename(accuracy_response = accuracy_scale,
+              confidence_response = confidence_scale,
+              familiarity_response = familarity_scale,
+              familiarity_timer = familarity_timer)
+
+
+# whole dataset
+write_xlsx(
+  df_all.tidy,
+  path = here("Data", "Clean", "cleaned_data.xlsx"),
+  col_names = TRUE)
+
+
+```
+

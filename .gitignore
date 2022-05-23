@@ -37,3 +37,9 @@ vignettes/*.pdf
 
 # R Environment Variables
 .Renviron
+
+# Model .RDS files
+/Models
+
+# Large headlines file
+/Headlines/Labelled

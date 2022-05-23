@@ -1,0 +1,2641 @@
+---
+title: "RP2 - Final"
+author: "Mubashir Sultan"
+date: "6/10/2021"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r libraries and initial setup,  include=FALSE}
+# sometimes tidy doesn't load
+# remove.packages("rlang")
+# install.packages("rlang")
+
+# loading libraries
+library(here)
+library(readxl)
+library(tidyverse)
+library(jtools)
+# library(LaCroixColoR)
+library(ggpubr)
+# library(scales)
+
+# model
+# library(lme4)
+library(GGally)
+library(brms)
+# library(sjPlot)
+library(emmeans)
+library(multcomp)
+library(rstatix)
+library(texreg)
+```
+
+```{r colour}
+
+# The palette with grey:
+cbPalette <- c("#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+
+```
+
+```{r loading in cleaned dataset}
+# dat
+dat <- read_excel(here::here("Data", "Clean", "cleaned_data.xlsx"))
+
+
+# add dat from pretest
+# item numbers¸
+item_number_index <- unique(dat$item_number)
+
+pretest_batch_1 <- read_excel(here::here("Data", "Misc", "final_items_after_pretest_batch_1.xlsx"), sheet = 1, col_names = TRUE, col_types = NULL)
+
+pretest_batch_2 <- read_excel(here::here("Data", "Misc", "final_items_after_pretest_batch_2.xlsx"), sheet = 1, col_names = TRUE, col_types = NULL)
+
+pretest <- rbind(pretest_batch_1, pretest_batch_2)
+
+# cleaning up workspace
+rm(list = c("pretest_batch_1", "pretest_batch_2"))
+
+
+```
+
+adding whether the item is true or false, which politicial party does the item favour, and participant accuracy
+```{r adding true and false and item dem/rep column df}
+# setting up a col
+dat$item_accuracy <- NA
+dat$item_political_leaning <- NA
+
+# string detect all of the values that are item number x and then add that to item_accuracy of my df
+for (i in 1:length(item_number_index)) {
+  # get index of all of those that have item_number i as item number
+  index_my_df <- str_detect(dat$item_number, paste0("\\b", item_number_index[i], "\\b"))
+  # get value of whether item number i is true or false
+  true_false_value_from_df_pretest <- pretest$Category[pretest$item_number == item_number_index[i]]
+  item_dem_rep_value_from_df_pretest <- pretest$pretest_combined_categ[pretest$item_number == item_number_index[i]]
+  # subset using index and value
+  dat$item_accuracy[index_my_df] <- true_false_value_from_df_pretest
+  dat$item_political_leaning[index_my_df] <- item_dem_rep_value_from_df_pretest
+}
+
+# adjusting values to True News and False News
+dat$item_accuracy[str_detect(dat$item_accuracy, "True")] <- "True News"
+dat$item_accuracy[str_detect(dat$item_accuracy, "False")] <- "False News"
+
+# making into factor 
+dat$item_accuracy <- factor(dat$item_accuracy, levels = c("False News", "True News"))
+
+
+# adding baseline accuracy column
+dat <- dat %>% mutate(part_accuracy = ifelse(item_accuracy == "False News" & accuracy_response == "No", TRUE,
+  ifelse(item_accuracy == "True News" & accuracy_response == "Yes", TRUE, FALSE)
+))
+```
+
+
+preparing classes and so on
+```{r preparing dat class for analysis,  include=FALSE}
+# changing Time Pressure to Time Pressure and such
+dat <- dat %>% mutate(condition = 
+                          case_when(condition == "time_pressure" ~ "Time Pressure",
+                                    condition == "non_time_pressure" ~ "Control"))
+
+# making into factor 
+dat$condition <- factor(dat$condition, levels = c("Control", "Time Pressure"))
+
+# into numeric
+dat$condition_num <- as.factor(as.numeric(dat$condition) - 1)
+
+dat$ID <- as.factor(dat$ID)
+dat$Subject <- as.factor(dat$Subject)
+dat$item_number <- as.factor(as.numeric(dat$item_number))
+dat$trial_number <- as.factor(as.numeric(dat$trial_number))
+
+dat$accuracy_response <- factor(dat$accuracy_response, levels = c("No", "Yes"))
+dat$accuracy_timer <- as.numeric(dat$accuracy_timer)
+
+dat$confidence_response <- as.factor(dat$confidence_response)
+dat$confidence_timer <- as.numeric(dat$confidence_timer)
+
+# removing "undefined" first
+dat$familiarity_response[dat$familiarity_response == "undefined"] <- NA
+dat$familiarity_response <- factor(dat$familiarity_response, levels = c("No", "Yes"))
+dat$familiarity_timer <- as.numeric(dat$familiarity_timer)
+
+# converting miliseconds into minutes
+dat$timerFirstBlock <- as.numeric(dat$timerFirstBlock)
+dat$timerFirstBlock <- dat$timerFirstBlock / 60000
+
+dat$timerSecondBlock <- as.numeric(dat$timerSecondBlock)
+dat$timerSecondBlock <- dat$timerSecondBlock / 60000
+
+dat$overallTime <- as.numeric(dat$overallTime)
+dat$overallTime <- dat$overallTime / 60000
+
+# adding class to numeric
+dat$bonus <- as.numeric(dat$bonus)
+
+# converting miliseconds into seconds
+dat$accuracy_timer <- dat$accuracy_timer / 1000
+dat$confidence_timer <- dat$confidence_timer / 1000
+dat$familiarity_timer <- dat$familiarity_timer / 1000
+
+# adding political leaning column
+# values for scale
+# 1 = Strongly Democratic
+# 2 = Moderately Democratic
+# 3 = Lean Democratic
+# 4 = Strongly Republican
+# 5 = Moderately Republican
+# 6 = Lean Republican
+dat$political_identification_scale <- as.numeric(dat$political_identification_scale)
+dat <- dat %>% mutate(political_identity = ifelse(political_identification_scale <= 3, "Democrat", "Republican"))
+
+# recoding to include scale labels
+dat <- dat %>% mutate(political_identification_scale = 
+        case_when(political_identification_scale == 1 ~ "Strongly Democratic",
+                  political_identification_scale == 2 ~ "Moderately Democratic",
+                  political_identification_scale == 3 ~ "Lean Democratic",
+                  political_identification_scale == 4 ~ "Lean Republican",
+                  political_identification_scale == 5 ~ "Moderately Republican",
+                  political_identification_scale == 6 ~ "Strongly Republican"
+                  )
+        )
+
+
+# adding class to gender and political leaning
+dat$political_identity <- factor(dat$political_identity, levels = c("Republican", "Democrat"))
+dat$political_identification_scale <- factor(dat$political_identification_scale, levels = c("Strongly Republican", 
+                                                                                            "Moderately Republican", 
+                                                                                            "Lean Republican",
+                                                                                            "Lean Democratic",
+                                                                                            "Moderately Democratic",
+                                                                                            "Strongly Democratic"
+                                                                                            ))
+dat$gender <- as.factor(dat$gender)
+
+
+# adding class to political interest
+dat$political_interest_1 <- factor(dat$political_interest_1, levels = c("Not at all interested", "Slightly interested", "Moderately interested", "Very interested", "Extremely interested"))
+dat$political_interest_2 <- factor(dat$political_interest_2)
+
+# adding class to news consumption
+dat$news_consumption_1 <- as.factor(dat$news_consumption_1)
+dat$news_consumption_2 <- as.factor(dat$news_consumption_2)
+
+# adding congruency
+dat <- dat %>% mutate(congruency = 
+        case_when(political_identity == "Democrat" & item_political_leaning == "Dem Favoured" ~ "Congruent",
+                  political_identity == "Democrat" & item_political_leaning == "Rep Favoured" ~ "Incongruent",
+                  political_identity == "Republican" & item_political_leaning == "Rep Favoured" ~ "Congruent",
+                  political_identity == "Republican" & item_political_leaning == "Dem Favoured" ~ "Incongruent"))
+
+
+
+dat <- dat %>% mutate(congruency_non_binary = 
+                  # for congruent 
+        case_when(political_identification_scale == "Strongly Democratic" & item_political_leaning == "Dem Favoured" ~ "Strongly Congruent",
+                  political_identification_scale == "Moderately Democratic" & item_political_leaning == "Dem Favoured" ~ "Moderately Congruent",
+                  political_identification_scale == "Lean Democratic" & item_political_leaning == "Dem Favoured" ~ "Lean Congruent",
+                  political_identification_scale == "Lean Republican" & item_political_leaning == "Rep Favoured" ~ "Lean Congruent",
+                  political_identification_scale == "Moderately Republican" & item_political_leaning == "Rep Favoured" ~ "Moderately Congruent",
+                  political_identification_scale == "Strongly Republican" & item_political_leaning == "Rep Favoured" ~ "Strongly Congruent",
+                  
+                  # for incongruent
+                  political_identification_scale == "Strongly Democratic" & item_political_leaning == "Rep Favoured" ~ "Strongly Incongruent",
+                  political_identification_scale == "Moderately Democratic" & item_political_leaning == "Rep Favoured" ~ "Moderately Incongruent",
+                  political_identification_scale == "Lean Democratic" & item_political_leaning == "Rep Favoured" ~ "Lean Incongruent",
+                  political_identification_scale == "Lean Republican" & item_political_leaning == "Dem Favoured" ~ "Lean Incongruent",
+                  political_identification_scale == "Moderately Republican" & item_political_leaning == "Dem Favoured" ~ "Moderately Incongruent",
+                  political_identification_scale == "Strongly Republican" & item_political_leaning == "Dem Favoured" ~ "Strongly Incongruent"
+                  ))
+
+# making factor
+dat$congruency <- factor(dat$congruency, levels = c("Incongruent", "Congruent"))
+
+dat$congruency_non_binary <- factor(dat$congruency_non_binary, levels = c("Strongly Incongruent", "Moderately Incongruent", "Lean Incongruent", "Lean Congruent", "Moderately Congruent", "Strongly Congruent"))
+
+
+
+# truce false for familiarity
+dat <- dat %>% mutate(binary_familiarity = ifelse(familiarity_response == "Yes", TRUE, FALSE))
+dat <- dat %>% mutate(binary_accuracy = ifelse(accuracy_response == "Yes", TRUE, FALSE))
+
+# adding class to batch
+dat$batch <- as.factor(dat$batch)
+
+# item numbers
+item_number_index <- unique(dat$item_number)
+
+
+# addng class for age
+dat$age <- as.numeric(dat$age)
+
+
+# confidence scale renamed
+dat <- dat %>%
+  mutate(confidence_percent = case_when(
+    confidence_response == 1 ~ 50,
+    confidence_response == 2 ~ 60,
+    confidence_response == 3 ~ 70,
+    confidence_response == 4 ~ 80,
+    confidence_response == 5 ~ 90,
+    confidence_response == 6 ~ 100
+  ))
+
+# CRT levels
+dat$CRT_binary <- factor(dat$CRT_binary, levels = c("Low", "High"))
+dat$CRT_binary <- recode_factor(dat$CRT_binary, Low = "CRT Low", High = "CRT High")
+
+# levels of accuracy per second
+dat <- dat %>% mutate(
+  second_bins =
+    ifelse(accuracy_timer <= 1, "One",
+      ifelse(accuracy_timer > 1 & accuracy_timer <= 2, "Two",
+        ifelse(accuracy_timer > 2 & accuracy_timer <= 3, "Three",
+          ifelse(accuracy_timer > 3 & accuracy_timer <= 4, "Four",
+            ifelse(accuracy_timer > 4 & accuracy_timer <= 5, "Five",
+              ifelse(accuracy_timer > 5 & accuracy_timer <= 6, "Six",
+                ifelse(accuracy_timer > 6 & accuracy_timer <= 7, "Seven",
+                  ifelse(accuracy_timer > 7 & accuracy_timer <= 8, "Eight",
+                    ifelse(accuracy_timer > 8 & accuracy_timer <= 9, "Nine",
+                      ifelse(accuracy_timer > 9 & accuracy_timer <= 10, "Ten",
+                        ifelse(accuracy_timer > 10 & accuracy_timer <= 11, "Eleven",
+                          ifelse(accuracy_timer > 11 & accuracy_timer <= 12, "Twelve",
+                            ifelse(accuracy_timer > 12 & accuracy_timer <= 13, "Thirteen",
+                              ifelse(accuracy_timer > 13 & accuracy_timer <= 14, "Fourteen",
+                                ifelse(accuracy_timer > 14 & accuracy_timer <= 15, "Fifteen",
+                                  ifelse(accuracy_timer > 15 & accuracy_timer <= 16, "Sixteen",
+                                    ifelse(accuracy_timer > 16 & accuracy_timer <= 17, "Seventeen",
+                                      ifelse(accuracy_timer > 17 & accuracy_timer <= 18, "Eighteen",
+                                        ifelse(accuracy_timer > 18 & accuracy_timer <= 19, "Nineteen",
+                                          ifelse(accuracy_timer > 19 & accuracy_timer <= 20, "Twenty",
+                                            "Twenty +"
+                                          )
+                                        )
+                                      )
+                                    )
+                                  )
+                                )
+                              )
+                            )
+                          )
+                        )
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+)
+
+
+# adding factor
+dat$second_bins <- factor(dat$second_bins, levels = c("One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen", "Twenty", "Twenty +"))
+```
+
+
+removing data points that exceed 6 seconds for time pressure treatment and 60 seconds for control treatment
+```{r}
+
+# capping accuracy timer removing those trial that go beyond 6 seconds in time pressure
+dat <- dat %>% 
+  mutate(accuracy_timer_cap = F,
+         accuracy_timer_cap = ifelse(condition == "Control" & accuracy_timer > 60, T,
+                                     ifelse(condition == "Time Pressure" & accuracy_timer > 6, T, accuracy_timer_cap)))
+
+# checking count
+dat %>% group_by(condition) %>% count(accuracy_timer_cap)
+
+# removing from dat
+dat <- dat %>%
+  filter(accuracy_timer_cap != T)
+
+
+```
+
+
+centering vars for model 
+```{r scaling vars for model}
+# creating binary versions
+dat <- dat %>%
+  mutate(C_condition = case_when(condition == "Control" ~ 0, condition == "Time Pressure" ~ 1),
+         C_item_accuracy = case_when(item_accuracy == "False News" ~ 0, item_accuracy == "True News" ~ 1),
+         C_congruency = case_when(congruency == "Incongruent" ~ 0, congruency == "Congruent" ~ 1),
+         C_familiarity_response = case_when(familiarity_response == "No" ~ 0, familiarity_response == "Yes" ~ 1),
+         C_congruency_non_binary = as.numeric(congruency_non_binary)) #can also be done via case_when and vice versa for others
+
+# now mean centering
+dat <- dat %>%
+  mutate(C_condition = C_condition - mean(C_condition),
+         C_item_accuracy = C_item_accuracy - mean(C_item_accuracy),
+         C_congruency = C_congruency - mean(C_congruency),
+         C_familiarity_response = C_familiarity_response - mean(C_familiarity_response, na.rm = T),
+         )
+
+# to see how CRT is standardised, see 'Making Data' script.
+
+# cogruency standardising
+standard_congruency_non_binary <- dat %>%
+  summarise(mean = mean(C_congruency_non_binary), SD = sd(C_congruency_non_binary), two_SD = SD*2, count = n(), se = (SD / (sqrt(count))), median = median(C_congruency_non_binary), min = min(C_congruency_non_binary), max = max(C_congruency_non_binary))
+
+# adding standardised values
+dat <- dat %>% dplyr::mutate(C_congruency_non_binary = (C_congruency_non_binary - standard_congruency_non_binary$mean[1])/standard_congruency_non_binary$two_SD[1])
+
+```
+
+
+```{r making a simplified dataset for demogrpahics and such}
+
+dat_demographic <- dat %>% group_by(Subject, condition, PROLIFIC_PID, ID, age, gender, political_identity, political_identification_scale, political_interest_1, political_interest_2, news_consumption_1, news_consumption_2, CRT_1_Clean, CRT_2_Clean, CRT_3_Clean, CRT_4_Clean, CRT_5, CRT_percent, CRT_standard, CRT_binary, overallTime, collection) %>% count()
+
+# adding which batch each participant answered on
+dat_demographic$batch <- dat$batch[dat_demographic$Subject]
+
+dat_demographic <- as.data.frame(dat_demographic)
+
+
+```
+
+list of participants across the various demographic categories
+```{r checking all categories}
+# making a table for all categories
+participants_per_category <- dat_demographic %>% group_by(batch, condition, gender,political_identity) %>% summarise(count = n())
+```
+
+
+# age summary
+```{r summary age}
+
+pp_age <- dat_demographic %>%
+  # drop_na(age) %>%
+  summarise(mean = mean(age), SD = sd(age), count = n(), se = (SD / (sqrt(count))), median = median(age), min = min(age), max = max(age))
+```
+
+
+```{r count per condition}
+
+dat_demographic %>% group_by(condition) %>% count()
+
+```
+
+
+# time taken plot
+```{r general descriptives time taken plot} 
+
+# overall times (in summary)
+dat_demographic %>%
+  drop_na(overallTime) %>%
+  ggplot(aes(x = Subject, y = overallTime, fill = condition)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "Overall Time Taken", x = "Participant Number", y = "Minutes") +
+  theme(text = element_text(size = 7), axis.text.x = element_text(angle = 45, hjust = 1))
+
+# overall time
+df_time_taken_split <- dat_demographic %>%
+  drop_na(overallTime) %>%
+  group_by(Subject, condition) %>%
+  summarise(mean = mean(overallTime))
+
+df_time_taken <- dat_demographic %>%
+  drop_na(overallTime) %>%
+  group_by(Subject) %>%
+  summarise(mean = mean(overallTime))
+
+
+colnames(df_time_taken)[2] <- "overallTime"
+colnames(df_time_taken_split)[3] <- "overallTime"
+
+
+df_time_taken_split <- df_time_taken_split %>%
+  group_by(condition) %>%
+  summarise(mean = mean(overallTime), SD = sd(overallTime), count = n(), se = (SD / (sqrt(count))), median = median(overallTime), min = min(overallTime), max = max(overallTime))
+
+df_time_taken <- df_time_taken %>%
+  dplyr::select(Subject, overallTime) %>%
+  summarise(mean = mean(overallTime), SD = sd(overallTime), count = n(), se = (SD / (sqrt(count))), median = median(overallTime), min = min(overallTime), max = max(overallTime))
+
+
+df_time_taken_split %>%
+  ggplot(aes(x = condition, y = mean)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = .2) +
+  theme_apa() +
+  labs(title = "Time Taken", x = "Overall Time", y = "Mean Minutes")
+
+df_time_taken %>%
+  ggplot(aes(x = "", y = mean)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = .2) +
+  theme_apa() +
+  labs(title = "Time Taken", x = "Overall Time", y = "Mean Minutes")
+
+
+df_time_taken_split %>%
+  ggplot(aes(x = condition, y = median)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "Time Taken", x = "Overall Time", y = "Median Minutes")
+
+df_time_taken %>%
+  ggplot(aes(x = "", y = median)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "Time Taken", x = "Overall Time", y = "Median Minutes")
+```
+
+
+# Political demographics
+```{r demographics age gender}
+# plot the distribution of political leaning and gender
+dat_demographic %>%
+  drop_na(gender, political_identity) %>%
+  dplyr::filter(!gender == "Other") %>%
+  ggplot(aes(x = gender, fill = political_identity)) +
+  geom_bar(position = "dodge") +
+  theme_apa(legend.use.title = TRUE) +
+  scale_fill_manual(values = c("#0021F5", "#EA3223")) +
+  labs(title = "Demographics - Gender x Political Lean", x = "Gender", y = "Count", fill = "Political Identity") +
+  geom_text(aes(label = ..count..), stat = "count", position = position_dodge2(width = 1), vjust = -.5) +
+  facet_wrap(~batch)
+
+# political strength
+dat_demographic %>%
+  drop_na(gender, political_identity) %>%
+  ggplot(aes(x = political_identification_scale, fill = political_identity)) +
+  geom_bar(position = "dodge") +
+  theme_apa(legend.use.title = TRUE) +
+  scale_fill_manual(values = c("#0021F5", "#EA3223")) +
+  labs(title = "Demographics - Political Strength", x = "Likert Values", y = "Count", fill = "Political Identity") +
+  geom_text(aes(label = ..count..), stat = "count", position = position_dodge2(width = 1), vjust = -.5) +
+  theme(axis.text.x = element_text(angle = 15, hjust = 1))
+
+# political interest 1 (How interested are you in information about what's going on in government and politics?)
+dat_demographic %>%
+  drop_na(gender, political_identity) %>%
+  ggplot(aes(x = political_interest_1, fill = political_identity)) +
+  geom_bar(position = "dodge") +
+  theme_apa(legend.use.title = TRUE) +
+  scale_fill_manual(values = c("#0021F5", "#EA3223")) +
+  labs(title = "Demographics - Political Interest 1", x = "Likert Values", y = "Count", fill = "Political Identity") +
+  geom_text(aes(label = ..count..), stat = "count", position = position_dodge2(width = 1), vjust = -.5) +
+  theme(axis.text.x = element_text(angle = 15, hjust = 1))
+
+# political interest 2 (During a typical week, how many days do you talk about politics with family or friends?)
+dat_demographic %>%
+  drop_na(gender, political_identity) %>%
+  ggplot(aes(x = political_interest_2, fill = political_identity)) +
+  geom_bar(position = "dodge") +
+  theme_apa(legend.use.title = TRUE) +
+  scale_fill_manual(values = c("#0021F5", "#EA3223")) +
+  labs(title = "Demographics - Political Interest 2", x = "Likert Values", y = "Count", fill = "Political Identity") +
+  geom_text(aes(label = ..count..), stat = "count", position = position_dodge2(width = 1), vjust = -.5)
+
+# news consumption 1 - main source
+dat_demographic %>%
+  drop_na(gender, political_identity, news_consumption_1) %>%
+  ggplot(aes(x = news_consumption_1, fill = political_identity)) +
+  geom_bar(position = "dodge") +
+  theme_apa(legend.use.title = TRUE) +
+  scale_fill_manual(values = c("#0021F5", "#EA3223")) +
+  labs(title = "Demographics - News Consumption 1 (main source)", x = "Values", y = "Count", fill = "Political Identity") +
+  geom_text(aes(label = ..count..), stat = "count", position = position_dodge2(width = 1), vjust = -.5) +
+  theme(axis.text.x = element_text(angle = 15, hjust = 1))
+
+# news consumption 1 - secondary source source
+dat_demographic %>%
+  drop_na(gender, political_identity, news_consumption_1) %>%
+  ggplot(aes(x = news_consumption_2, fill = political_identity)) +
+  geom_bar(position = "dodge") +
+  theme_apa(legend.use.title = TRUE) +
+  scale_fill_manual(values = c("#0021F5", "#EA3223")) +
+  labs(title = "Demographics - News Consumption 1 (secondary source)", x = "Values", y = "Count", fill = "Political Identity") +
+  geom_text(aes(label = ..count..), stat = "count", position = position_dodge2(width = 1), vjust = -.5) +
+  theme(axis.text.x = element_text(angle = 15, hjust = 1))
+```
+
+# CRT 
+```{r CRT figures}
+
+dat_demographic %>%
+  ggplot(aes(x = CRT_binary)) +
+  geom_bar(position = "dodge") +
+  theme_apa(legend.use.title = TRUE) +
+  labs(title = "CRT Correct", x = "CRT", y = "Count", fill = "Political Identity") +
+  geom_text(aes(label = ..count..), stat = "count", position = position_dodge2(width = 1), vjust = -.5)
+
+
+# making a CRT long df
+CRT_long <- dat_demographic %>% select(Subject, ID, condition, CRT_1_Clean, CRT_2_Clean, CRT_3_Clean, CRT_4_Clean, CRT_percent, CRT_standard, CRT_binary)
+CRT_long <- pivot_longer(CRT_long, !c(Subject, ID, condition, CRT_percent, CRT_standard, CRT_binary), names_to = "measurement", values_to = "value")
+
+# removing clean
+CRT_long$measurement <- str_replace(CRT_long$measurement, "_Clean", "")
+
+CRT_long %>%
+  drop_na(value) %>%
+  ggplot(aes(x = as.factor(as.character(value)), fill = condition)) +
+  geom_bar(position = "dodge") +
+  theme_apa(legend.use.title = TRUE) +
+  labs(title = "CRT", x = "CRT", y = "Count", fill = "Condition") +
+  geom_text(aes(label = ..count..), stat = "count", position = position_dodge2(width = 1), vjust = -.5) +
+  facet_grid(~measurement)
+
+
+CRT_non_scaled <- dat_demographic %>%
+  # dplyr::filter(accuracy_timer < 60) %>%
+  ggplot(aes(x = CRT_percent)) +
+  geom_histogram(bins = 5) +
+  # geom_vline(xintercept = CRT_Clean_summary_standard$mean[1], linetype="dotted", color = "grey") +
+  scale_x_continuous(breaks = seq(0, 1, .25)) +
+  theme_apa() +
+  labs(x = "Proportion Correct", y = "Count")
+
+CRT_non_scaled
+ggsave(file = here::here("Figures", "CRT_non_scaled.pdf"), plot = CRT_non_scaled)
+
+CRT_scaled <- dat_demographic %>%
+  # dplyr::filter(accuracy_timer < 60) %>%
+  ggplot(aes(x = CRT_standard)) +
+  geom_histogram(bins = 5) +
+    # geom_vline(xintercept = CRT_Clean_summary_non_standard$mean[1], linetype="dotted", color = "grey") +
+  scale_x_continuous(breaks = c(-1.08, -0.64, -0.19, 0.25, 0.70)) +
+  theme_apa() +
+  labs(x = "Proportion Correct Standardised", y = "Count")
+
+CRT_scaled
+ggsave(file = here::here("Figures", "CRT_scaled.pdf"), plot = CRT_scaled)
+
+
+CRT_combined <- 
+  cowplot::plot_grid(
+  CRT_non_scaled,
+  CRT_scaled,
+  # align = 'vh',
+  labels = c("A", "B"),
+  # hjust = -1,
+  nrow = 1
+)
+
+CRT_combined
+
+ggsave(file = here::here("Figures", "CRT_combined.pdf"), width = 7 , height = 4, plot = CRT_combined)
+
+
+```
+
+# Ideological congruency
+```{r ideological congruency figures}
+
+dat %>%
+  drop_na(political_identification_scale) %>%
+  ggplot(aes(x = political_identification_scale, fill = political_identity)) +
+  geom_histogram(stat = "count") +
+  theme_apa() +
+  labs(title = "Political Identity Scale Histogram", x = "Likert Values", y = "Count") +
+  scale_fill_manual(values = c("#0021F5", "#EA3223")) +
+  theme(axis.text.x = element_text(angle = 15, hjust = 1))
+
+dat %>%
+  drop_na(congruency) %>%
+  ggplot(aes(x = congruency, fill = political_identity)) +
+  geom_histogram(stat = "count") +
+  theme_apa() +
+  labs(title = "Congruency Histogram", x = "Likert Values", y = "Count") +
+  scale_fill_manual(values = c("#0021F5", "#EA3223"))
+
+ ideological_congruency <- dat %>%
+  drop_na(congruency_non_binary) %>%
+  ggplot(aes(x = congruency_non_binary)) +
+  geom_histogram(stat = "count") +
+  theme_apa() +
+  labs(x = "Ideological Congruency", y = "Count") +
+  scale_fill_manual(values = c("#0021F5", "#EA3223")) +
+  theme(axis.text.x = element_text(angle = 15, vjust = .5, hjust = .5)) +
+  theme(plot.margin = unit(c(0,1.5,0,0), "lines"))
+
+ ideological_congruency
+ 
+ ggsave(file = here::here("Figures", "congruency.pdf"), width = 7 , height = 7, plot = ideological_congruency)
+
+  
+ideological_congruency_scaled <- dat %>%
+  drop_na(C_congruency_non_binary) %>%
+  ggplot(aes(x = C_congruency_non_binary)) +
+  geom_histogram(bins = 6) +
+  theme_apa() +
+  labs(x = "Ideological Congruency Standardised", y = "Count") +
+  scale_fill_manual(values = c("#0021F5", "#EA3223"))
+
+ideological_congruency_scaled
+
+
+
+ideological_congruency_combined <- 
+  cowplot::plot_grid(
+  ideological_congruency,
+  ideological_congruency_scaled,
+  # align = 'vh',
+  labels = c("A", "B"),
+  # hjust = -1,
+  nrow = 1
+)
+
+ideological_congruency_combined
+
+# ggsave(file = here::here("Figures", "congruency_combined.pdf"), width = 7 , height = 4, plot = ideological_congruency_combined)
+
+
+```
+
+# RT histograms 
+```{r times histograms accuracy }
+# (in summary)
+# Basic histogram Accuracy timer
+dat %>%
+  dplyr::filter(accuracy_timer < 60) %>%
+  ggplot(aes(x = accuracy_timer)) +
+  geom_histogram() +
+  theme_apa() +
+  labs(title = "Accuracy RT Histogram", x = "Seconds", y = "Count") +
+  facet_wrap(~condition, scales = "free")
+
+```
+
+
+```{r times histograms confidence }
+# Basic histogram confidence timer
+# dat %>% dplyr::filter(confidence_timer < 20) %>% ggplot(aes(x=confidence_timer)) + geom_histogram() + theme_apa() + labs(title = "Confidence RT Histogram", x = "Seconds", y = "Count")
+
+dat %>%
+  dplyr::filter(confidence_timer < 15) %>%
+  ggplot(aes(x = confidence_timer)) +
+  geom_histogram() +
+  theme_apa() +
+  labs(title = "Confidence RT Histogram", x = "Seconds", y = "Count") +
+  facet_wrap(~condition, scales = "free")
+
+```
+
+
+```{r times histograms familiarity }
+# Basic histogram familiarity timer
+dat %>%
+  dplyr::filter(familiarity_timer < 15) %>%
+  ggplot(aes(x = familiarity_timer)) +
+  geom_histogram() +
+  theme_apa() +
+  labs(title = "familiarity RT Histogram", x = "Seconds", y = "Count") +
+  facet_wrap(~condition)
+
+```
+
+# Scale histograms
+```{r scales histograms accuracy}
+# Basic histogram Accuracy scale
+dat %>%
+  drop_na(accuracy_response) %>%
+  dplyr::filter(!accuracy_response == "undefined") %>%
+  ggplot(aes(x = accuracy_response, fill = political_identity)) +
+  geom_histogram(stat = "count") +
+  theme_apa() +
+  labs(title = "Accuracy Scale Histogram", x = "Likert Values", y = "Count") +
+  scale_fill_manual(values = c("#0021F5", "#EA3223")) +
+  facet_wrap(~condition)
+
+
+#  non-tp
+dat %>%
+  dplyr::filter(item_number %in% item_number_index[1:15]) %>%
+  drop_na(accuracy_response) %>%
+  dplyr::filter(!accuracy_response == "undefined") %>%
+  ggplot(aes(x = accuracy_response)) +
+  geom_histogram(stat = "count") +
+  theme_apa() +
+  labs(title = "Accuracy Scale Histogram Non-TP (Item Level)", x = "Likert Values", y = "Count") +
+  facet_wrap(~item_number)
+
+dat %>%
+  dplyr::filter(item_number %in% item_number_index[16:30]) %>%
+  drop_na(accuracy_response) %>%
+  dplyr::filter(!accuracy_response == "undefined") %>%
+  ggplot(aes(x = accuracy_response)) +
+  geom_histogram(stat = "count") +
+  theme_apa() +
+  labs(title = "Accuracy Scale Histogram Non-TP (Item Level)", x = "Likert Values", y = "Count") +
+  facet_wrap(~item_number)
+
+#  with-tp
+dat %>%
+  dplyr::filter(item_number %in% item_number_index[31:45]) %>%
+  drop_na(accuracy_response) %>%
+  ggplot(aes(x = accuracy_response)) +
+  geom_histogram(stat = "count") +
+  theme_apa() +
+  labs(title = "Accuracy Scale Histogram With-TP (Item Level)", x = "Likert Values", y = "Count") +
+  facet_wrap(~item_number)
+
+dat %>%
+  dplyr::filter(item_number %in% item_number_index[46:60]) %>%
+  drop_na(accuracy_response) %>%
+  dplyr::filter(!accuracy_response == "undefined") %>%
+  ggplot(aes(x = accuracy_response)) +
+  geom_histogram(stat = "count") +
+  theme_apa() +
+  labs(title = "Accuracy Scale Histogram With-TP (Item Level)", x = "Likert Values", y = "Count") +
+  facet_wrap(~item_number)
+
+dat %>%
+  dplyr::filter(item_number %in% item_number_index[61:75]) %>%
+  drop_na(accuracy_response) %>%
+  dplyr::filter(!accuracy_response == "undefined") %>%
+  ggplot(aes(x = accuracy_response)) +
+  geom_histogram(stat = "count") +
+  theme_apa() +
+  labs(title = "Accuracy Scale Histogram With-TP (Item Level)", x = "Likert Values", y = "Count") +
+  facet_wrap(~item_number)
+```
+
+
+```{r scales histograms confidence}
+# Basic histogram Confidence scale
+dat %>%
+  drop_na(confidence_response) %>%
+  ggplot(aes(x = confidence_response, fill = political_identity)) +
+  geom_histogram(stat = "count") +
+  theme_apa() +
+  labs(title = "Confidence Scale Histogram", x = "Likert Values", y = "Count") +
+  scale_fill_manual(values = c("#0021F5", "#EA3223")) +
+  facet_wrap(~condition)
+
+dat %>%
+  dplyr::filter(item_number %in% item_number_index[1:15]) %>%
+  drop_na(confidence_response) %>%
+  ggplot(aes(x = confidence_response)) +
+  geom_histogram(stat = "count") +
+  theme_apa() +
+  labs(title = "Confidence Scale Histogram Non-TP (Item Level)", x = "Likert Values", y = "Count") +
+  facet_wrap(~item_number)
+
+dat %>%
+  dplyr::filter(item_number %in% item_number_index[16:30]) %>%
+  drop_na(confidence_response) %>%
+  ggplot(aes(x = confidence_response)) +
+  geom_histogram(stat = "count") +
+  theme_apa() +
+  labs(title = "Confidence Scale Histogram Non-TP (Item Level)", x = "Likert Values", y = "Count") +
+  facet_wrap(~item_number)
+
+dat %>%
+  dplyr::filter(item_number %in% item_number_index[31:45]) %>%
+  drop_na(confidence_response) %>%
+  ggplot(aes(x = confidence_response)) +
+  geom_histogram(stat = "count") +
+  theme_apa() +
+  labs(title = "Confidence Scale Histogram With-TP (Item Level)", x = "Likert Values", y = "Count") +
+  facet_wrap(~item_number)
+
+dat %>%
+  dplyr::filter(item_number %in% item_number_index[46:60]) %>%
+  drop_na(confidence_response) %>%
+  ggplot(aes(x = confidence_response)) +
+  geom_histogram(stat = "count") +
+  theme_apa() +
+  labs(title = "Confidence Scale Histogram With-TP (Item Level)", x = "Likert Values", y = "Count") +
+  facet_wrap(~item_number)
+
+dat %>%
+  dplyr::filter(item_number %in% item_number_index[61:75]) %>%
+  drop_na(confidence_response) %>%
+  ggplot(aes(x = confidence_response)) +
+  geom_histogram(stat = "count") +
+  theme_apa() +
+  labs(title = "Confidence Scale Histogram With-TP (Item Level)", x = "Likert Values", y = "Count") +
+  facet_wrap(~item_number)
+```
+
+
+```{r scales histograms familiarity}
+# Basic histogram familiarity scale
+dat %>%
+  drop_na(familiarity_response) %>%
+  ggplot(aes(x = familiarity_response, fill = political_identity)) +
+  geom_histogram(stat = "count") +
+  theme_apa() +
+  labs(title = "familiarity Scale Histogram", x = "Likert Values", y = "Count") +
+  scale_fill_manual(values = c("#0021F5", "#EA3223")) +
+  facet_wrap(~condition)
+
+# (summary)
+dat %>%
+  dplyr::filter(item_number %in% item_number_index[1:15]) %>%
+  drop_na(familiarity_response) %>%
+  ggplot(aes(x = familiarity_response)) +
+  geom_histogram(stat = "count") +
+  theme_apa() +
+  labs(title = "familiarity Scale Histogram Non-TP (Item Level)", x = "Likert Values", y = "Count") +
+  facet_wrap(~item_number)
+
+dat %>%
+  dplyr::filter(item_number %in% item_number_index[16:30]) %>%
+  drop_na(familiarity_response) %>%
+  ggplot(aes(x = familiarity_response)) +
+  geom_histogram(stat = "count") +
+  theme_apa() +
+  labs(title = "familiarity Scale Histogram Non-TP (Item Level)", x = "Likert Values", y = "Count") +
+  facet_wrap(~item_number)
+
+dat %>%
+  dplyr::filter(item_number %in% item_number_index[31:45]) %>%
+  drop_na(familiarity_response) %>%
+  ggplot(aes(x = familiarity_response)) +
+  geom_histogram(stat = "count") +
+  theme_apa() +
+  labs(title = "familiarity Scale Histogram With-TP (Item Level)", x = "Likert Values", y = "Count") +
+  facet_wrap(~item_number)
+
+dat %>%
+  dplyr::filter(item_number %in% item_number_index[46:60]) %>%
+  drop_na(familiarity_response) %>%
+  ggplot(aes(x = familiarity_response)) +
+  geom_histogram(stat = "count") +
+  theme_apa() +
+  labs(title = "familiarity Scale Histogram With-TP (Item Level)", x = "Likert Values", y = "Count") +
+  facet_wrap(~item_number)
+
+dat %>%
+  dplyr::filter(item_number %in% item_number_index[61:75]) %>%
+  drop_na(familiarity_response) %>%
+  ggplot(aes(x = familiarity_response)) +
+  geom_histogram(stat = "count") +
+  theme_apa() +
+  labs(title = "familiarity Scale Histogram With-TP (Item Level)", x = "Likert Values", y = "Count") +
+  facet_wrap(~item_number)
+```
+
+# Response times per item 
+```{r timers per item accuracy}
+# all items accuracy timer
+item_times_accuracy <- dat %>%
+  group_by(item_number, condition) %>%
+  summarise(mean = mean(accuracy_timer, na.rm = TRUE), SD = sd(accuracy_timer, na.rm = TRUE), count = n(), se = (SD / (sqrt(count))), median = median(accuracy_timer, na.rm = TRUE), min = min(accuracy_timer, na.rm = TRUE), max = max(accuracy_timer, na.rm = TRUE))
+
+# item_times_accuracy
+
+# (summary)
+item_times_accuracy %>%
+  ggplot(aes(x = item_number, y = mean)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "Accuracy Mean Time Per Item", x = "Item Number", y = "Seconds") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = .2) +
+  facet_wrap(~condition)
+
+
+item_times_accuracy %>%
+  dplyr::filter(condition == "Control") %>%
+  ggplot(aes(x = item_number, y = mean)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "Accuracy Mean Time Per Item Non-TP", x = "Item Number", y = "Seconds") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = .2) +
+  facet_wrap(~condition)
+
+item_times_accuracy %>%
+  dplyr::filter(condition == "Time Pressure") %>%
+  ggplot(aes(x = item_number, y = mean)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "Accuracy Mean Time Per Item With-TP", x = "Item Number", y = "Seconds") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = .2) +
+  facet_wrap(~condition)
+
+
+item_times_accuracy %>%
+  ggplot(aes(x = item_number, y = median)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "Accuracy Median Time Per Item", x = "Item Number", y = "Seconds") +
+  facet_wrap(~condition)
+
+item_times_accuracy %>%
+  dplyr::filter(condition == "Control") %>%
+  ggplot(aes(x = item_number, y = median)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "Accuracy Median Time Per Item Non-TP", x = "Item Number", y = "Seconds") +
+  facet_wrap(~condition)
+
+item_times_accuracy %>%
+  dplyr::filter(condition == "Time Pressure") %>%
+  ggplot(aes(x = item_number, y = median)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "Accuracy Median Time Per Item With-TP", x = "Item Number", y = "Seconds") +
+  facet_wrap(~condition)
+```
+
+
+```{r timers per item confidence}
+# all items confidence timer
+item_times_confidence <- dat %>%
+  group_by(item_number, condition) %>%
+  summarise(mean = mean(confidence_timer, na.rm = TRUE), SD = sd(confidence_timer, na.rm = TRUE), count = n(), se = (SD / (sqrt(count))), median = median(confidence_timer, na.rm = TRUE), min = min(confidence_timer, na.rm = TRUE), max = max(confidence_timer, na.rm = TRUE))
+
+# item_times_confidence
+
+# (summary)
+item_times_confidence %>%
+  ggplot(aes(x = item_number, y = mean)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "Confidence Mean Time Per Item Non-TP", x = "Item Number", y = "Seconds") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = .2) +
+  facet_wrap(~condition)
+
+
+item_times_confidence %>%
+  dplyr::filter(condition == "Control") %>%
+  ggplot(aes(x = item_number, y = mean)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "Confidence Mean Time Per Item Non-TP", x = "Item Number", y = "Seconds") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = .2) +
+  facet_wrap(~condition)
+
+item_times_confidence %>%
+  dplyr::filter(condition == "Time Pressure") %>%
+  ggplot(aes(x = item_number, y = mean)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "Confidence Mean Time Per Item With-TP", x = "Item Number", y = "Seconds") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = .2) +
+  facet_wrap(~condition)
+
+
+item_times_confidence %>%
+  ggplot(aes(x = item_number, y = median)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "Confidence Median Time Per Item", x = "Item Number", y = "Seconds") +
+  facet_wrap(~condition)
+
+item_times_confidence %>%
+  dplyr::filter(condition == "Control") %>%
+  ggplot(aes(x = item_number, y = median)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "Confidence Median Time Per Item Non-TP", x = "Item Number", y = "Seconds") +
+  facet_wrap(~condition)
+
+item_times_confidence %>%
+  dplyr::filter(condition == "Time Pressure") %>%
+  ggplot(aes(x = item_number, y = median)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "Confidence Median Time Per Item With-TP", x = "Item Number", y = "Seconds") +
+  facet_wrap(~condition)
+```
+
+
+```{r timers per item familiarity}
+# all items familiarty timer
+item_times_familiarity <- dat %>%
+  group_by(item_number, condition) %>%
+  summarise(mean = mean(familiarity_timer, na.rm = TRUE), SD = sd(familiarity_timer, na.rm = TRUE), count = n(), se = (SD / (sqrt(count))), median = median(familiarity_timer, na.rm = TRUE), min = min(familiarity_timer, na.rm = TRUE), max = max(familiarity_timer, na.rm = TRUE))
+
+# item_times_familiarity
+
+# (summary)
+item_times_familiarity %>%
+  ggplot(aes(x = item_number, y = mean)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "familiarity Mean Time Per Item", x = "Item Number", y = "Seconds") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = .2) +
+  facet_wrap(~condition)
+
+
+item_times_familiarity %>%
+  dplyr::filter(condition == "Control") %>%
+  ggplot(aes(x = item_number, y = mean)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "familiarity Mean Time Per Item Non-TP", x = "Item Number", y = "Seconds") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = .2) +
+  facet_wrap(~condition)
+
+item_times_familiarity %>%
+  dplyr::filter(condition == "Time Pressure") %>%
+  ggplot(aes(x = item_number, y = mean)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "familiarity Mean Time Per Item With-TP", x = "Item Number", y = "Seconds") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = .2) +
+  facet_wrap(~condition)
+
+
+item_times_familiarity %>%
+  ggplot(aes(x = item_number, y = median)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "familiarity Median Time Per Item", x = "Item Number", y = "Seconds") +
+  facet_wrap(~condition)
+
+item_times_familiarity %>%
+  dplyr::filter(condition == "Control") %>%
+  ggplot(aes(x = item_number, y = median)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "familiarity Median Time Per Item Non-TP", x = "Item Number", y = "Seconds") +
+  facet_wrap(~condition)
+
+item_times_familiarity %>%
+  dplyr::filter(condition == "Time Pressure") %>%
+  ggplot(aes(x = item_number, y = median)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "familiarity Median Time Per Item With-TP", x = "Item Number", y = "Seconds") +
+  facet_wrap(~condition)
+```
+
+# Response times per trial 
+```{r timers per trial accuracy}
+# all trials accuracy timer
+trial_times_accuracy <- dat %>%
+  drop_na(trial_number) %>%
+  group_by(trial_number, condition) %>%
+  summarise(mean = mean(accuracy_timer, na.rm = TRUE), SD = sd(accuracy_timer, na.rm = TRUE), count = n(), se = (SD / (sqrt(count))), median = median(accuracy_timer, na.rm = TRUE), min = min(accuracy_timer, na.rm = TRUE), max = max(accuracy_timer, na.rm = TRUE))
+
+# trial_times_accuracy
+
+# (summary)
+trial_times_accuracy %>%
+  ggplot(aes(x = trial_number, y = mean)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "Accuracy Mean Time Per Trial", x = "Trial Number", y = "Seconds") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = .2) +
+  facet_wrap(~condition)
+
+trial_times_accuracy %>%
+  dplyr::filter(condition == "Control") %>%
+  ggplot(aes(x = trial_number, y = mean)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "Accuracy Mean Time Per Trial Non-TP", x = "Trial Number", y = "Seconds") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = .2) +
+  facet_wrap(~condition)
+
+trial_times_accuracy %>%
+  dplyr::filter(condition == "Time Pressure") %>%
+  ggplot(aes(x = trial_number, y = mean)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "Accuracy Mean Time Per Trial With-TP", x = "Trial Number", y = "Seconds") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = .2) +
+  facet_wrap(~condition)
+
+
+trial_times_accuracy %>%
+  ggplot(aes(x = trial_number, y = median)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "Accuracy Median Time Per Trial", x = "Trial Number", y = "Seconds") +
+  facet_wrap(~condition)
+
+trial_times_accuracy %>%
+  dplyr::filter(condition == "Control") %>%
+  ggplot(aes(x = trial_number, y = median)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "Accuracy Median Time Per Trial Non-TP", x = "Trial Number", y = "Seconds") +
+  facet_wrap(~condition)
+
+trial_times_accuracy %>%
+  dplyr::filter(condition == "Time Pressure") %>%
+  ggplot(aes(x = trial_number, y = median)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "Accuracy Median Time Per Trial With-TP", x = "Trial Number", y = "Seconds") +
+  facet_wrap(~condition)
+```
+
+
+```{r timers per trial confidence}
+# all trials confidence timer
+trial_times_confidence <- dat %>%
+  drop_na(trial_number) %>%
+  group_by(trial_number, condition) %>%
+  summarise(mean = mean(confidence_timer, na.rm = TRUE), SD = sd(confidence_timer, na.rm = TRUE), count = n(), se = (SD / (sqrt(count))), median = median(confidence_timer, na.rm = TRUE), min = min(confidence_timer, na.rm = TRUE), max = max(confidence_timer, na.rm = TRUE))
+
+# trial_times_confidence
+
+
+# (summary)
+trial_times_confidence %>%
+  ggplot(aes(x = trial_number, y = mean)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "Confidence Mean Time Per Trial", x = "Trial Number", y = "Seconds") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = .2) +
+  facet_wrap(~condition)
+
+
+trial_times_confidence %>%
+  dplyr::filter(condition == "Control") %>%
+  ggplot(aes(x = trial_number, y = mean)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "Confidence Mean Time Per Trial Non-TP", x = "Trial Number", y = "Seconds") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = .2) +
+  facet_wrap(~condition)
+
+trial_times_confidence %>%
+  dplyr::filter(condition == "Time Pressure") %>%
+  ggplot(aes(x = trial_number, y = mean)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "Confidence Mean Time Per Trial With-TP", x = "Trial Number", y = "Seconds") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = .2) +
+  facet_wrap(~condition)
+
+
+trial_times_confidence %>%
+  ggplot(aes(x = trial_number, y = median)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "Confidence Median Time Per Trial", x = "Trial Number", y = "Seconds") +
+  facet_wrap(~condition)
+
+trial_times_confidence %>%
+  dplyr::filter(condition == "Control") %>%
+  ggplot(aes(x = trial_number, y = median)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "Confidence Median Time Per Trial Non-TP", x = "Trial Number", y = "Seconds") +
+  facet_wrap(~condition)
+
+trial_times_confidence %>%
+  dplyr::filter(condition == "Time Pressure") %>%
+  ggplot(aes(x = trial_number, y = median)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "Confidence Median Time Per Trial With-TP", x = "Trial Number", y = "Seconds") +
+  facet_wrap(~condition)
+```
+
+
+```{r timers per trial familiarity}
+# all trials familiarty timer
+trial_times_familiarity <- dat %>%
+  drop_na(trial_number) %>%
+  group_by(trial_number, condition) %>%
+  summarise(mean = mean(familiarity_timer, na.rm = TRUE), SD = sd(familiarity_timer, na.rm = TRUE), count = n(), se = (SD / (sqrt(count))), median = median(familiarity_timer, na.rm = TRUE), min = min(familiarity_timer, na.rm = TRUE), max = max(familiarity_timer, na.rm = TRUE))
+
+# trial_times_familiarity
+
+# (summary)
+trial_times_familiarity %>%
+  ggplot(aes(x = trial_number, y = mean)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "familiarity Mean Time Per Trial", x = "Trial Number", y = "Seconds") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = .2) +
+  facet_wrap(~condition)
+
+trial_times_familiarity %>%
+  dplyr::filter(condition == "Control") %>%
+  ggplot(aes(x = trial_number, y = mean)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "familiarity Mean Time Per Trial Non-TP", x = "Trial Number", y = "Seconds") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = .2) +
+  facet_wrap(~condition)
+
+trial_times_familiarity %>%
+  dplyr::filter(condition == "Time Pressure") %>%
+  ggplot(aes(x = trial_number, y = mean)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "familiarity Mean Time Per Trial With-TP", x = "Trial Number", y = "Seconds") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = .2) +
+  facet_wrap(~condition)
+
+
+trial_times_familiarity %>%
+  ggplot(aes(x = trial_number, y = median)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "familiarity Median Time Per Trial", x = "Trial Number", y = "Seconds") +
+  facet_wrap(~condition)
+
+trial_times_familiarity %>%
+  dplyr::filter(condition == "Control") %>%
+  ggplot(aes(x = trial_number, y = median)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "familiarity Median Time Per Trial Non-TP", x = "Trial Number", y = "Seconds") +
+  facet_wrap(~condition)
+
+trial_times_familiarity %>%
+  dplyr::filter(condition == "Time Pressure") %>%
+  ggplot(aes(x = trial_number, y = median)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "familiarity Median Time Per Trial With-TP", x = "Trial Number", y = "Seconds") +
+  facet_wrap(~condition)
+```
+
+# changes in value over time
+```{r change in scale values over time accuracy }
+# all trial accuracy timer
+trial_scales_accuracy <- dat %>%
+  drop_na(trial_number) %>%
+  group_by(trial_number, condition) %>%
+  drop_na(accuracy_response) %>%
+  summarise(mean = mean(as.numeric(binary_accuracy), na.rm = TRUE), SD = sd(as.numeric(binary_accuracy), na.rm = TRUE), count = n(), se = (SD / (sqrt(count))), median = median(as.numeric(binary_accuracy), na.rm = TRUE), min = min(as.numeric(binary_accuracy), na.rm = TRUE), max = max(as.numeric(binary_accuracy), na.rm = TRUE))
+
+# trial_scales_accuracy
+
+# (summary)
+trial_scales_accuracy %>%
+  drop_na(trial_number) %>%
+  ggplot(aes(x = trial_number, y = mean)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "Accuracy Mean Scale Value Per Trial", x = "Trial Number", y = "Likert Values (> .5 Accuracy-Yes)") +
+  geom_errorbar(aes(ymin = (mean) - se, ymax = (mean) + se), width = .2) +
+  facet_wrap(~condition)
+```
+
+
+```{r change in scale values over time confidence}
+# all trial confidence timer
+trial_scales_confidence <- dat %>%
+  drop_na(trial_number) %>%
+  group_by(trial_number, condition) %>%
+  drop_na(confidence_response) %>%
+  summarise(mean = mean(as.numeric(confidence_response), na.rm = TRUE), SD = sd(as.numeric(confidence_response), na.rm = TRUE), count = n(), se = (SD / (sqrt(count))), median = median(as.numeric(confidence_response), na.rm = TRUE), min = min(as.numeric(confidence_response), na.rm = TRUE), max = max(as.numeric(confidence_response), na.rm = TRUE))
+
+# trial_scales_confidence
+
+# (summary)
+trial_scales_confidence %>%
+  drop_na(trial_number) %>%
+  ggplot(aes(x = trial_number, y = mean)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "Confidence Mean Scale Value Per Trial", x = "Trial Number", y = "Likert Values (> 3 Confidence-Certain)") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = .2) +
+  facet_wrap(~condition)
+```
+
+
+```{r change in scale values over time confidence familiarity}
+# all trial familiarity timer
+trial_scales_familiarity <- dat %>%
+  drop_na(trial_number) %>%
+  group_by(trial_number, condition) %>%
+  drop_na(familiarity_response) %>%
+  summarise(mean = mean(as.numeric(binary_familiarity), na.rm = TRUE), SD = sd(as.numeric(binary_familiarity), na.rm = TRUE), count = n(), se = (SD / (sqrt(count))), median = median(as.numeric(binary_familiarity), na.rm = TRUE), min = min(as.numeric(binary_familiarity), na.rm = TRUE), max = max(as.numeric(binary_familiarity), na.rm = TRUE))
+
+# trial_scales_familiarity
+
+# (summary)
+trial_scales_familiarity %>%
+  ggplot(aes(x = trial_number, y = mean)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "familiarity Mean Scale Value Per Trial", x = "Trial Number", y = "Yes/No Values - 1 (> 0.5 Familiar-Yes)") +
+  geom_errorbar(aes(ymin = (mean) - se, ymax = (mean) + se), width = .2) +
+  facet_wrap(~condition)
+```
+
+
+# Looking into baseline accuracy
+```{r baseline accuracy }
+
+# accuracy descriptives all
+accuracy <- dat %>%
+  drop_na(accuracy_response) %>%
+  summarise(mean = mean(as.numeric(part_accuracy), na.rm = TRUE), SD = sd(as.numeric(part_accuracy), na.rm = TRUE), count = n(), se = (SD / (sqrt(count))), median = median(as.numeric(part_accuracy), na.rm = TRUE), min = min(as.numeric(part_accuracy), na.rm = TRUE), max = max(as.numeric(part_accuracy), na.rm = TRUE))
+
+accuracy
+
+# accuracy descriptives group
+accuracy_group <- dat %>%
+  drop_na(accuracy_response) %>%
+  group_by(condition) %>%
+  summarise(mean = mean(as.numeric(part_accuracy), na.rm = TRUE), SD = sd(as.numeric(part_accuracy), na.rm = TRUE), count = n(), se = (SD / (sqrt(count))), median = median(as.numeric(part_accuracy), na.rm = TRUE), min = min(as.numeric(part_accuracy), na.rm = TRUE), max = max(as.numeric(part_accuracy), na.rm = TRUE))
+
+accuracy_group
+
+# accuracy descriptives group x political
+accuracy_political <- dat %>%
+  group_by(condition, political_identity) %>%
+  drop_na(accuracy_response) %>%
+  summarise(mean = mean(as.numeric(part_accuracy), na.rm = TRUE), SD = sd(as.numeric(part_accuracy), na.rm = TRUE), count = n(), se = (SD / (sqrt(count))), median = median(as.numeric(part_accuracy), na.rm = TRUE), min = min(as.numeric(part_accuracy), na.rm = TRUE), max = max(as.numeric(part_accuracy), na.rm = TRUE))
+
+accuracy_political
+
+# Basic histogram Accuracy scale
+dat %>%
+  drop_na(part_accuracy) %>%
+  ggplot(aes(x = part_accuracy, fill = political_identity)) +
+  geom_histogram(stat = "count") +
+  theme_apa() +
+  labs(title = "Relative Accuracy Histogram", x = "Accuracy (TRUE = correct)", y = "Count") +
+  scale_fill_manual(values = c("#0021F5", "#EA3223")) +
+  facet_wrap(~condition)
+
+
+# accuracy mean per subject
+accuracy_pp <- dat %>%
+  group_by(Subject, condition) %>%
+  drop_na(accuracy_response) %>%
+  summarise(mean = mean(as.numeric(part_accuracy), na.rm = TRUE), SD = sd(as.numeric(part_accuracy), na.rm = TRUE), count = n(), se = (SD / (sqrt(count))), median = median(as.numeric(part_accuracy), na.rm = TRUE), min = min(as.numeric(part_accuracy), na.rm = TRUE), max = max(as.numeric(part_accuracy), na.rm = TRUE))
+
+accuracy_pp
+
+accuracy_pp %>% ggplot(aes(x = Subject, y = mean, fill = condition)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "Relative Accuracy Histogram per Subject", x = "Subject", y = "% Corect") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = .2)
+
+# accuracy mean per item
+item_accuracy <- dat %>%
+  group_by(item_number, condition) %>%
+  drop_na(accuracy_response) %>%
+  summarise(mean = mean(as.numeric(part_accuracy), na.rm = TRUE), SD = sd(as.numeric(part_accuracy), na.rm = TRUE), count = n(), se = (SD / (sqrt(count))), median = median(as.numeric(part_accuracy), na.rm = TRUE), min = min(as.numeric(part_accuracy), na.rm = TRUE), max = max(as.numeric(part_accuracy), na.rm = TRUE))
+
+item_accuracy
+
+item_accuracy %>% ggplot(aes(x = item_number, y = mean, fill)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "Relative Accuracy Histogram per Item", x = "Item", y = "% Correct") +
+  scale_fill_manual(values = c("#0021F5", "#EA3223")) +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = .2) +
+  facet_wrap(~condition)
+```
+
+
+```{r accuracy further}
+
+
+# accuracy descriptives per second¸
+accuracy_bins <- dat %>%
+  drop_na(part_accuracy) %>%
+  group_by(second_bins) %>%
+  summarise(mean = mean(as.numeric(part_accuracy), na.rm = TRUE), SD = sd(as.numeric(part_accuracy), na.rm = TRUE), count = n(), se = (SD / (sqrt(count))), median = median(as.numeric(part_accuracy), na.rm = TRUE), min = min(as.numeric(part_accuracy), na.rm = TRUE), max = max(as.numeric(part_accuracy), na.rm = TRUE))
+
+accuracy_bins
+
+# Basic histogram Accuracy scale
+accuracy_bins %>% ggplot(aes(x = second_bins, y = mean)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "Relative Accuracy Histogram", x = "Seconds", y = "% Correct") +
+  scale_fill_manual(values = c("#0021F5", "#EA3223")) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = .2)
+
+# accuracy descriptives per second by condition
+accuracy_bins_condition <- dat %>%
+  drop_na(part_accuracy) %>%
+  group_by(second_bins, condition, collection) %>%
+  summarise(mean = mean(as.numeric(part_accuracy), na.rm = TRUE), SD = sd(as.numeric(part_accuracy), na.rm = TRUE), count = n(), se = (SD / (sqrt(count))), median = median(as.numeric(part_accuracy), na.rm = TRUE), min = min(as.numeric(part_accuracy), na.rm = TRUE), max = max(as.numeric(part_accuracy), na.rm = TRUE))
+
+accuracy_bins_condition
+
+accuracy_bins_condition %>% ggplot(aes(x = second_bins, y = mean)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "Relative Accuracy Histogram", x = "Seconds", y = "% Correct") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = .2) +
+  facet_grid(collection ~ condition)
+
+```
+
+
+```{r running some descriptive stats}
+
+# accuracy_all
+accuracy_summary <- dat %>%
+  group_by(Subject, condition) %>%
+  drop_na(part_accuracy) %>%
+  summarise(mean = mean(as.numeric(part_accuracy)), SD = sd(as.numeric(part_accuracy)), count = n(), se = (SD / (sqrt(count))), median = median(as.numeric(part_accuracy)), min = min(as.numeric(part_accuracy)), max = max(as.numeric(part_accuracy)))
+accuracy_summary <- accuracy_summary %>% mutate(accuracy_percentage = mean * 100)
+
+accuracy_summary <- accuracy_summary %>%
+  group_by(condition) %>%
+  summarise(mean = mean(accuracy_percentage), SD = sd(accuracy_percentage), count = n(), se = (SD / (sqrt(count))), median = median(accuracy_percentage), min = min(accuracy_percentage), max = max(accuracy_percentage))
+
+
+# accuracy and condition
+dat %>%
+  group_by(condition) %>%
+  drop_na(part_accuracy) %>%
+  summarise(mean = mean(as.numeric(part_accuracy)), SD = sd(as.numeric(part_accuracy)), count = n(), se = (SD / (sqrt(count))), median = median(as.numeric(part_accuracy)), min = min(as.numeric(part_accuracy)), max = max(as.numeric(part_accuracy))) %>%
+  ggplot(aes(x = condition, y = mean)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "Accuracy X Time Pressure", x = "Time Pressure", y = "Accuracy (%)") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = .2)
+
+
+# accuracy and condition
+dat %>%
+  group_by(condition, collection) %>%
+  drop_na(part_accuracy) %>%
+  summarise(mean = mean(as.numeric(part_accuracy)), SD = sd(as.numeric(part_accuracy)), count = n(), se = (SD / (sqrt(count))), median = median(as.numeric(part_accuracy)), min = min(as.numeric(part_accuracy)), max = max(as.numeric(part_accuracy))) %>%
+  ggplot(aes(x = condition, y = mean)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "Accuracy X Time Pressure", x = "Time Pressure", y = "Accuracy (%)") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = .2) +
+  facet_wrap(~collection)
+
+# accuracy true and false
+dat %>%
+  group_by(item_accuracy, collection) %>%
+  drop_na(part_accuracy) %>%
+  summarise(mean = mean(as.numeric(part_accuracy)), SD = sd(as.numeric(part_accuracy)), count = n(), se = (SD / (sqrt(count))), median = median(as.numeric(part_accuracy)), min = min(as.numeric(part_accuracy)), max = max(as.numeric(part_accuracy))) %>%
+  ggplot(aes(x = item_accuracy, y = mean)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "Accuracy X Item Truthfullness", x = "Item Truthfullness", y = "Accuracy (%)") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = .2) +
+  facet_wrap(~collection)
+
+# accuracy and political identity
+dat %>%
+  group_by(political_identity, collection) %>%
+  drop_na(part_accuracy, political_identity) %>%
+  summarise(mean = mean(as.numeric(part_accuracy)), SD = sd(as.numeric(part_accuracy)), count = n(), se = (SD / (sqrt(count))), median = median(as.numeric(part_accuracy)), min = min(as.numeric(part_accuracy)), max = max(as.numeric(part_accuracy))) %>%
+  ggplot(aes(x = political_identity, y = mean)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "Accuracy X Political identity", x = "Political identity", y = "Accuracy (%)") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = .2) +
+  facet_wrap(~collection)
+
+# accuracy and congruency
+dat %>%
+  group_by(congruency, collection) %>%
+  drop_na(part_accuracy, political_identity) %>%
+  summarise(mean = mean(as.numeric(part_accuracy)), SD = sd(as.numeric(part_accuracy)), count = n(), se = (SD / (sqrt(count))), median = median(as.numeric(part_accuracy)), min = min(as.numeric(part_accuracy)), max = max(as.numeric(part_accuracy))) %>%
+  ggplot(aes(x = congruency, y = mean)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "Accuracy X Congruency", x = "Congruency", y = "Accuracy (%)") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = .2) +
+  facet_wrap(~collection)
+
+# accuracy and CRT
+dat %>%
+  group_by(CRT_binary, collection) %>%
+  drop_na(part_accuracy, political_identity) %>%
+  summarise(mean = mean(as.numeric(part_accuracy)), SD = sd(as.numeric(part_accuracy)), count = n(), se = (SD / (sqrt(count))), median = median(as.numeric(part_accuracy)), min = min(as.numeric(part_accuracy)), max = max(as.numeric(part_accuracy))) %>%
+  ggplot(aes(x = CRT_binary, y = mean)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa() +
+  labs(title = "Accuracy X CRT Proficiency", x = "CRT Proficiency", y = "Accuracy (%)") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = .2) +
+  facet_wrap(~collection)
+
+
+
+# accuracy item_accuracy x condition
+dat %>%
+  group_by(item_accuracy, condition, collection) %>%
+  drop_na(part_accuracy) %>%
+  summarise(mean = mean(as.numeric(part_accuracy)), SD = sd(as.numeric(part_accuracy)), count = n(), se = (SD / (sqrt(count))), median = median(as.numeric(part_accuracy)), min = min(as.numeric(part_accuracy)), max = max(as.numeric(part_accuracy))) %>%
+  ggplot(aes(x = item_accuracy, y = mean)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa(legend.use.title = TRUE) +
+  labs(title = "Accuracy X Item Truth X Condition", x = "Item Truthfulness", y = "Accuracy (%)") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = .2) +
+  facet_grid(collection ~ condition)
+
+# accuracy item_accuracy x political identity
+dat %>%
+  group_by(item_accuracy, political_identity, collection) %>%
+  drop_na(part_accuracy, political_identity) %>%
+  summarise(mean = mean(as.numeric(part_accuracy)), SD = sd(as.numeric(part_accuracy)), count = n(), se = (SD / (sqrt(count))), median = median(as.numeric(part_accuracy)), min = min(as.numeric(part_accuracy)), max = max(as.numeric(part_accuracy))) %>%
+  ggplot(aes(x = item_accuracy, y = mean)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa(legend.use.title = TRUE) +
+  labs(title = "Accuracy X Item Truth X Political Identity", x = "Item Truthfulness", y = "Accuracy (%)") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = .2) +
+  facet_grid(collection ~ political_identity)
+
+# accuracy item_accuracy x congruency
+dat %>%
+  group_by(item_accuracy, congruency, collection) %>%
+  drop_na(part_accuracy, political_identity) %>%
+  summarise(mean = mean(as.numeric(part_accuracy)), SD = sd(as.numeric(part_accuracy)), count = n(), se = (SD / (sqrt(count))), median = median(as.numeric(part_accuracy)), min = min(as.numeric(part_accuracy)), max = max(as.numeric(part_accuracy))) %>%
+  ggplot(aes(x = item_accuracy, y = mean)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa(legend.use.title = TRUE) +
+  labs(title = "Accuracy X Item Truth X Congruency", x = "Item Truthfulness", y = "Accuracy (%)") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = .2) +
+  facet_wrap(collection ~ congruency)
+
+
+# accuracy political_identity x CRT_binary
+dat %>%
+  group_by(political_identity, CRT_binary, collection) %>%
+  drop_na(part_accuracy, CRT_binary, political_identity) %>%
+  summarise(mean = mean(as.numeric(part_accuracy)), SD = sd(as.numeric(part_accuracy)), count = n(), se = (SD / (sqrt(count))), median = median(as.numeric(part_accuracy)), min = min(as.numeric(part_accuracy)), max = max(as.numeric(part_accuracy))) %>%
+  ggplot(aes(x = political_identity, y = mean)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_apa(legend.use.title = TRUE) +
+  labs(title = "Accuracy X Political Identity X CRT Proficiency ", x = "Political Identity", y = "Accuracy (%)") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = .2) +
+  facet_wrap(collection ~ CRT_binary)
+```
+
+
+# figures for paper
+## general
+```{r figures final 1 - general accuracy}
+
+font_size <- 15
+
+# item_accuracy item and accuracy
+TP_descriptive_true_false <- dat %>%
+  drop_na(item_accuracy, condition) %>%
+  group_by(Subject, item_accuracy, condition) %>%
+  drop_na(part_accuracy) %>%
+  summarise(mean = mean(as.numeric(part_accuracy)), SD = sd(as.numeric(part_accuracy)), count = n(), se = (SD / (sqrt(count))), median = median(as.numeric(part_accuracy)), min = min(as.numeric(part_accuracy)), max = max(as.numeric(part_accuracy))) %>%
+  mutate(accuracy_percentage = mean * 100)
+
+
+# overall confidence summary stats condition
+TP_descriptive_true_false_summary_overall_overall <- dat %>%
+  drop_na(item_accuracy, condition, part_accuracy) %>%
+  summarise(mean = mean(as.numeric(part_accuracy)), SD = sd(as.numeric(part_accuracy)), count = n(), se = (SD / (sqrt(count))), median = median(as.numeric(part_accuracy)), min = min(as.numeric(part_accuracy)), max = max(as.numeric(part_accuracy))) %>%
+  mutate(accuracy_percentage = mean * 100)
+
+# overall confidence summary stats condition
+TP_descriptive_true_false_summary_overall_true_false <- dat %>%
+  group_by(item_accuracy) %>%
+  drop_na(item_accuracy, condition, part_accuracy) %>%
+  summarise(mean = mean(as.numeric(part_accuracy)), SD = sd(as.numeric(part_accuracy)), count = n(), se = (SD / (sqrt(count))), median = median(as.numeric(part_accuracy)), min = min(as.numeric(part_accuracy)), max = max(as.numeric(part_accuracy))) %>%
+  mutate(accuracy_percentage = mean * 100)
+
+
+# overall confidence summary stats condition
+TP_descriptive_true_false_summary_overall <- TP_descriptive_true_false %>%
+  group_by(condition) %>%
+  summarise(mean = mean(accuracy_percentage), SD = sd(accuracy_percentage), count = n(), se = (SD / (sqrt(count))), median = median(accuracy_percentage), min = min(accuracy_percentage), max = max(accuracy_percentage))
+
+# overall confidence summary stats condition
+TP_descriptive_true_false_summary <- TP_descriptive_true_false %>%
+  group_by(condition, item_accuracy) %>%
+  summarise(mean = mean(accuracy_percentage), SD = sd(accuracy_percentage), count = n(), se = (SD / (sqrt(count))), median = median(accuracy_percentage), min = min(accuracy_percentage), max = max(accuracy_percentage)) %>%
+  rename_at(vars(-condition, -item_accuracy), ~ paste0(.x, "_overall_mean"))
+
+
+TP_descriptive_true_false_plot <-
+  TP_descriptive_true_false %>%
+ggplot(aes(x = condition, y = accuracy_percentage, fill = item_accuracy)) + 
+  ggdist::stat_halfeye(
+    # adjust = .5, 
+    width = .6, 
+    .width = 0, 
+    # justification = -.2, 
+    point_colour = NA,
+    alpha = .25,
+    position = position_nudge(x = +.1)
+  ) + 
+  geom_boxplot(
+    width = .1,
+    outlier.size = .25,
+    # outlier.shape = NA
+  ) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(
+    aes(
+      color = item_accuracy
+      ),
+    ## draw jitter on the left
+    side = "l", 
+    ## control range of jitter
+    range_scale = .5, 
+    ## add some transparency
+    alpha = .25,
+    size = .25,
+    position = position_nudge(x = -.01)
+  ) +
+  geom_pointrange(
+    dat = TP_descriptive_true_false_summary,
+    aes(
+      y = mean_overall_mean,
+      ymin = mean_overall_mean - se_overall_mean,
+      ymax = mean_overall_mean + se_overall_mean,
+      color = item_accuracy
+    ),
+    size = .25,
+    position = position_nudge(x = +.2),
+  ) +
+  labs(x = "Treatment", y = "Accuracy (%)") +
+    theme_apa(legend.use.title = FALSE, legend.pos = "top") +
+    theme(text = element_text(size=15)) +
+      scale_fill_manual(values = c("#E69F00", "#56B4E9")) +
+    scale_color_manual(values = c("#E69F00", "#56B4E9")) +
+  ylim(0, 100)
+
+
+TP_descriptive_true_false_plot
+
+ggsave(file= here::here("Figures", "TP_true_false_item.pdf"), plot=TP_descriptive_true_false_plot, width =7, height = 7)
+# ggsave(file = "TP_true_false_item_1.pdf", plot = TP_descriptive_true_false_plot, width = 1746, height = 1350, units = c("px"), scale = 1)
+
+
+
+```
+
+## CRT
+```{r figures final 2 - analytical thinking}
+
+# CRT and accuracy
+TP_descriptive_CRT <- dat %>%
+  drop_na(item_accuracy, CRT_binary, condition) %>%
+  group_by(Subject, item_accuracy, CRT_binary, condition) %>%
+  drop_na(part_accuracy) %>%
+  summarise(mean = mean(as.numeric(part_accuracy)), SD = sd(as.numeric(part_accuracy)), count = n(), se = (SD / (sqrt(count))), median = median(as.numeric(part_accuracy)), min = min(as.numeric(part_accuracy)), max = max(as.numeric(part_accuracy))) %>%
+  mutate(accuracy_percentage = mean * 100)
+
+TP_descriptive_CRT_overall_overall_d <- dat %>%
+  drop_na(item_accuracy, CRT_binary, condition,part_accuracy) %>%
+  group_by(CRT_binary) %>%
+  summarise(mean = mean(as.numeric(part_accuracy)), SD = sd(as.numeric(part_accuracy)), count = n(), se = (SD / (sqrt(count))), median = median(as.numeric(part_accuracy)), min = min(as.numeric(part_accuracy)), max = max(as.numeric(part_accuracy))) %>%
+  mutate(accuracy_percentage = mean * 100)
+
+TP_descriptive_CRT_overall_overall_time_d <- dat %>%
+  drop_na(CRT_binary, condition,part_accuracy) %>%
+  group_by(condition, CRT_binary) %>%
+  summarise(mean = mean(as.numeric(part_accuracy)), SD = sd(as.numeric(part_accuracy)), count = n(), se = (SD / (sqrt(count))), median = median(as.numeric(part_accuracy)), min = min(as.numeric(part_accuracy)), max = max(as.numeric(part_accuracy))) %>%
+  mutate(accuracy_percentage = mean * 100)
+
+TP_descriptive_CRT_overall_overall_c <- dat %>%
+  drop_na(item_accuracy, CRT_binary, condition,part_accuracy) %>%
+  group_by(item_accuracy, CRT_binary) %>%
+  summarise(mean = mean(as.numeric(part_accuracy)), SD = sd(as.numeric(part_accuracy)), count = n(), se = (SD / (sqrt(count))), median = median(as.numeric(part_accuracy)), min = min(as.numeric(part_accuracy)), max = max(as.numeric(part_accuracy))) %>%
+  mutate(accuracy_percentage = mean * 100)
+
+TP_descriptive_CRT_overall_overall_time_c <- dat %>%
+  drop_na(item_accuracy, CRT_binary, condition,part_accuracy) %>%
+  group_by(item_accuracy, condition, CRT_binary) %>%
+  summarise(mean = mean(as.numeric(part_accuracy)), SD = sd(as.numeric(part_accuracy)), count = n(), se = (SD / (sqrt(count))), median = median(as.numeric(part_accuracy)), min = min(as.numeric(part_accuracy)), max = max(as.numeric(part_accuracy))) %>%
+  mutate(accuracy_percentage = mean * 100)
+
+# overall confidence summary stats condition
+TP_descriptive_CRT_summary <- TP_descriptive_CRT %>%
+  group_by(condition, item_accuracy, CRT_binary) %>%
+  summarise(mean = mean(accuracy_percentage), SD = sd(accuracy_percentage), count = n(), se = (SD / (sqrt(count))), median = median(accuracy_percentage), min = min(accuracy_percentage), max = max(accuracy_percentage)) %>%
+  rename_at(vars(-condition, -item_accuracy, -CRT_binary), ~ paste0(.x, "_overall_mean"))
+
+
+TP_descriptive_CRT_plot <-
+  TP_descriptive_CRT %>%
+  ggplot(aes(x = CRT_binary, y = accuracy_percentage, fill = item_accuracy)) +
+  ggdist::stat_halfeye(
+    # adjust = .5, 
+    width = .6, 
+    .width = 0, 
+    # justification = -.2, 
+    point_colour = NA,
+    alpha = .25,
+    position = position_nudge(x = +.1)
+  ) + 
+  geom_boxplot(
+    width = .1,
+    outlier.size = .25,
+    # outlier.shape = NA
+  ) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(
+    aes(
+      color = item_accuracy
+      ),
+    ## draw jitter on the left
+    side = "l", 
+    ## control range of jitter
+    range_scale = .5, 
+    ## add some transparency
+    alpha = .25,
+    size = .25,
+    # make overlap
+    position = position_nudge(x = -.01)
+  ) +
+  geom_pointrange(
+    dat = TP_descriptive_CRT_summary,
+    aes(
+      y = mean_overall_mean,
+      ymin = mean_overall_mean - se_overall_mean,
+      ymax = mean_overall_mean + se_overall_mean,
+      color = item_accuracy
+    ),
+    size = .25,
+    position = position_nudge(x = +.2)
+  ) +
+  labs(x = "CRT", y = "Accuracy (%)") +
+    theme_apa(legend.use.title = FALSE) +
+    scale_fill_manual(values = c("#E69F00", "#56B4E9")) +
+    scale_color_manual(values = c("#E69F00", "#56B4E9")) +
+  ylim(0, 100) +
+  theme(text = element_text(size=15), plot.margin = margin(6, 0, 6, 0)) +
+  facet_wrap(~condition)
+
+
+TP_descriptive_CRT_plot
+
+ggsave(file = here::here("Figures", "TP_CRT.pdf"), plot = TP_descriptive_CRT_plot, width =9, height = 9,dpi = 800)
+# ggsave(file="TP_CRT.pdf", plot=TP_descriptive_CRT_plot, width = 750, height = 750, units = c("px"), scale = 1)
+
+
+```
+
+## ideological congruency
+```{r figure 3 - partisan bias}
+
+# partisanship and accuracy
+TP_descriptive_congruency <- dat %>%
+  drop_na(item_accuracy, congruency, condition) %>%
+  group_by(Subject, congruency, item_accuracy, condition) %>%
+  drop_na(part_accuracy) %>%
+  summarise(mean = mean(as.numeric(part_accuracy)), SD = sd(as.numeric(part_accuracy)), count = n(), se = (SD / (sqrt(count))), median = median(as.numeric(part_accuracy)), min = min(as.numeric(part_accuracy)), max = max(as.numeric(part_accuracy))) %>%
+  mutate(accuracy_percentage = mean * 100)
+
+TP_descriptive_congruency_overall_overall_d <- dat %>%
+  drop_na(item_accuracy, congruency, condition, part_accuracy) %>%
+  group_by(congruency) %>%
+  summarise(mean = mean(as.numeric(part_accuracy)), SD = sd(as.numeric(part_accuracy)), count = n(), se = (SD / (sqrt(count))), median = median(as.numeric(part_accuracy)), min = min(as.numeric(part_accuracy)), max = max(as.numeric(part_accuracy))) %>%
+  mutate(accuracy_percentage = mean * 100)
+
+TP_descriptive_congruency_overall_time_d <- dat %>%
+  drop_na(item_accuracy, congruency, condition, part_accuracy) %>%
+  group_by(congruency, condition) %>%
+  summarise(mean = mean(as.numeric(part_accuracy)), SD = sd(as.numeric(part_accuracy)), count = n(), se = (SD / (sqrt(count))), median = median(as.numeric(part_accuracy)), min = min(as.numeric(part_accuracy)), max = max(as.numeric(part_accuracy))) %>%
+  mutate(accuracy_percentage = mean * 100)
+
+TP_descriptive_congruency_overall_overall_c <- dat %>%
+  drop_na(item_accuracy, congruency, condition, part_accuracy) %>%
+  group_by(item_accuracy, congruency) %>%
+  drop_na(part_accuracy) %>%
+  summarise(mean = mean(as.numeric(part_accuracy)), SD = sd(as.numeric(part_accuracy)), count = n(), se = (SD / (sqrt(count))), median = median(as.numeric(part_accuracy)), min = min(as.numeric(part_accuracy)), max = max(as.numeric(part_accuracy))) %>%
+  mutate(accuracy_percentage = mean * 100)
+
+TP_descriptive_congruency_overall_time_c <- dat %>%
+  drop_na(item_accuracy, congruency, condition, part_accuracy) %>%
+  group_by(item_accuracy, congruency, condition) %>%
+  drop_na(part_accuracy) %>%
+  summarise(mean = mean(as.numeric(part_accuracy)), SD = sd(as.numeric(part_accuracy)), count = n(), se = (SD / (sqrt(count))), median = median(as.numeric(part_accuracy)), min = min(as.numeric(part_accuracy)), max = max(as.numeric(part_accuracy))) %>%
+  mutate(accuracy_percentage = mean * 100)
+
+
+# overall confidence summary stats condition
+TP_descriptive_congruency_summary <- TP_descriptive_congruency %>%
+  group_by(condition, item_accuracy, congruency) %>%
+  summarise(mean = mean(accuracy_percentage), SD = sd(accuracy_percentage), count = n(), se = (SD / (sqrt(count))), median = median(accuracy_percentage), min = min(accuracy_percentage), max = max(accuracy_percentage)) %>%
+  rename_at(vars(-condition, -item_accuracy, -congruency), ~ paste0(.x, "_overall_mean"))
+
+
+TP_descriptive_congruency_plot <-
+  TP_descriptive_congruency %>%
+  ggplot(aes(x = congruency, y = accuracy_percentage, fill = item_accuracy)) +
+  ggdist::stat_halfeye(
+    # adjust = .5, 
+    width = .6, 
+    .width = 0, 
+    # justification = -.2, 
+    point_colour = NA,
+    alpha = .25,
+    position = position_nudge(x = +.1)
+  ) + 
+  geom_boxplot(
+    width = .1,
+    outlier.size = .25,
+    # outlier.shape = NA
+  ) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(
+    aes(
+      color = item_accuracy
+      ),
+    ## draw jitter on the left
+    side = "l", 
+    ## control range of jitter
+    range_scale = .5, 
+    ## add some transparency
+    alpha = .25,
+    size = .25,
+    # make overlap
+    position = position_nudge(x = -.01)
+  ) +
+  geom_pointrange(
+    dat = TP_descriptive_congruency_summary,
+    aes(
+      y = mean_overall_mean,
+      ymin = mean_overall_mean - se_overall_mean,
+      ymax = mean_overall_mean + se_overall_mean,
+      color = item_accuracy
+    ),
+    size = .25,
+    position = position_nudge(x = +.2)
+  ) +
+  labs(x = "Ideological Congruency", y = "Accuracy (%)") +
+    theme_apa(legend.use.title = FALSE) +
+  # theme(legend.position="none") +
+    scale_fill_manual(values = c("#E69F00", "#56B4E9")) +
+    scale_color_manual(values = c("#E69F00", "#56B4E9")) +
+  ylim(0, 100) +
+  theme(text = element_text(size=15), plot.margin = margin(6, 0, 6, 0)) +
+  # theme(axis.text.y = element_text(angle = 90, hjust = 0.5)) +
+  # coord_flip() +
+  facet_wrap(~condition)
+
+
+TP_descriptive_congruency_plot
+
+ggsave(file = here::here("Figures", "TP_Congruency.pdf"), plot = TP_descriptive_congruency_plot, width =9, height = 9,dpi = 800)
+# ggsave(file="TP_Congruency.pdf", plot=TP_descriptive_congruency_plot, width = 750, height = 750, units = c("px"), scale = 1)
+
+
+```
+
+```{r combining first two predictor graphs into one image}
+
+# arrange the three plots in a single row
+CRT_congruency_predictor_final_figures <- 
+  cowplot::plot_grid(
+  TP_descriptive_CRT_plot + theme(legend.position="none", text = element_text(size=15)),
+  TP_descriptive_congruency_plot + theme(legend.position="none", text = element_text(size=15)),
+  # align = 'vh',
+  labels = c("A", "B"),
+  # hjust = -1,
+  nrow = 2
+)
+
+# extract a legend that is laid out horizontally
+legend_b <- get_legend(
+  TP_descriptive_CRT_plot + 
+    guides(color = guide_legend(nrow = 1)) +
+    theme(legend.position = "bottom")
+)
+
+# add the legend underneath the row we made earlier. Give it 10%
+# of the height of one plot (via rel_heights).
+CRT_congruency_predictor_final_figures <- cowplot::plot_grid(CRT_congruency_predictor_final_figures, legend_b, ncol = 1, rel_heights = c(1, .1))
+
+
+ggsave(file = here::here("Figures", "CRT_congruency_predictor_final_figures.pdf"), 
+       plot = CRT_congruency_predictor_final_figures,
+  width = 8,
+  height = 12
+  )
+
+```
+
+
+## motivated reasoning
+```{r figure 6 - motivated reasoning}
+
+# motivated reasoning and accuracy
+TP_descriptive_motivated <- dat %>%
+  drop_na(item_accuracy, congruency, CRT_binary, condition) %>%
+  group_by(Subject, congruency, item_accuracy, condition, CRT_binary) %>%
+  drop_na(part_accuracy) %>%
+  summarise(mean = mean(as.numeric(part_accuracy)), SD = sd(as.numeric(part_accuracy)), count = n(), se = (SD / (sqrt(count))), median = median(as.numeric(part_accuracy)), min = min(as.numeric(part_accuracy)), max = max(as.numeric(part_accuracy))) %>%
+  mutate(accuracy_percentage = mean * 100)
+
+TP_descriptive_motivated_overall_overall_d <- dat %>%
+  drop_na(item_accuracy, congruency, CRT_binary, condition, part_accuracy) %>%
+  group_by(congruency, CRT_binary) %>%
+  summarise(mean = mean(as.numeric(part_accuracy)), SD = sd(as.numeric(part_accuracy)), count = n(), se = (SD / (sqrt(count))), median = median(as.numeric(part_accuracy)), min = min(as.numeric(part_accuracy)), max = max(as.numeric(part_accuracy))) %>%
+  mutate(accuracy_percentage = mean * 100)
+
+TP_descriptive_motivated_overall_time_d <- dat %>%
+  drop_na(item_accuracy, congruency, CRT_binary, condition, part_accuracy) %>%
+  group_by(congruency, CRT_binary, condition) %>%
+  summarise(mean = mean(as.numeric(part_accuracy)), SD = sd(as.numeric(part_accuracy)), count = n(), se = (SD / (sqrt(count))), median = median(as.numeric(part_accuracy)), min = min(as.numeric(part_accuracy)), max = max(as.numeric(part_accuracy))) %>%
+  mutate(accuracy_percentage = mean * 100)
+
+# overall confidence summary stats condition
+TP_descriptive_motivated_summary <- TP_descriptive_motivated %>%
+  group_by(condition, item_accuracy, congruency, CRT_binary) %>%
+  summarise(mean = mean(accuracy_percentage), SD = sd(accuracy_percentage), count = n(), se = (SD / (sqrt(count))), median = median(accuracy_percentage), min = min(accuracy_percentage), max = max(accuracy_percentage)) %>%
+  rename_at(vars(-condition, -item_accuracy, -congruency, -CRT_binary), ~ paste0(.x, "_overall_mean"))
+
+
+TP_descriptive_motivated_plot <-
+  TP_descriptive_motivated %>%
+  ggplot(aes(x = congruency, y = accuracy_percentage, fill = item_accuracy)) +
+  ggdist::stat_halfeye(
+    # adjust = .5, 
+    width = .6, 
+    .width = 0, 
+    # justification = -.2, 
+    point_colour = NA,
+    alpha = .25,
+    position = position_nudge(x = +.1)
+  ) + 
+  geom_boxplot(
+    width = .1,
+    outlier.size = .25,
+    # outlier.shape = NA
+  ) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(
+    aes(
+      color = item_accuracy
+      ),
+    ## draw jitter on the left
+    side = "l", 
+    ## control range of jitter
+    range_scale = .5, 
+    ## add some transparency
+    alpha = .25,
+    size = .25,
+    # make overlap
+    position = position_nudge(x = -.01)
+  ) +
+  geom_pointrange(
+    dat = TP_descriptive_motivated_summary,
+    aes(
+      y = mean_overall_mean,
+      ymin = mean_overall_mean - se_overall_mean,
+      ymax = mean_overall_mean + se_overall_mean,
+      color = item_accuracy
+    ),
+    size = .25,
+    position = position_nudge(x = +.2)
+  ) +
+  labs(x = "Ideological Congruency", y = "Accuracy (%)") +
+    theme_apa(legend.use.title = FALSE) +
+    scale_fill_manual(values = c("#E69F00", "#56B4E9")) +
+    scale_color_manual(values = c("#E69F00", "#56B4E9")) +
+  ylim(0, 100) +
+  theme(text = element_text(size=15), plot.margin = margin(6, 0, 6, 0)) +
+  # theme(axis.text.y = element_text(angle = 90, hjust = 0.5)) +
+  # coord_flip() +
+  facet_grid(CRT_binary ~ condition)
+
+
+TP_descriptive_motivated_plot
+
+ggsave(file = here::here("Figures", "TP_Motivated.pdf"), plot = TP_descriptive_motivated_plot)
+# ggsave(file="TP_familiarity.pdf", plot=TP_descriptive_motivated_plot, width = 750, height = 750, units = c("px"), scale = 1)
+
+```
+
+## familiarity
+```{r figure 5 - familiarity}
+
+# familiarity and accuracy
+TP_descriptive_familiarity <- dat %>%
+  drop_na(item_accuracy, familiarity_response, condition) %>%
+  group_by(Subject, familiarity_response, item_accuracy, condition) %>%
+  drop_na(part_accuracy) %>%
+  summarise(mean = mean(as.numeric(part_accuracy)), SD = sd(as.numeric(part_accuracy)), count = n(), se = (SD / (sqrt(count))), median = median(as.numeric(part_accuracy)), min = min(as.numeric(part_accuracy)), max = max(as.numeric(part_accuracy))) %>%
+  mutate(accuracy_percentage = mean * 100)
+
+TP_descriptive_familiarity_overall <- dat %>%
+  drop_na(item_accuracy, familiarity_response, condition, part_accuracy) %>%
+  group_by(familiarity_response, condition) %>%
+  summarise(mean = mean(as.numeric(part_accuracy)), SD = sd(as.numeric(part_accuracy)), count = n(), se = (SD / (sqrt(count))), median = median(as.numeric(part_accuracy)), min = min(as.numeric(part_accuracy)), max = max(as.numeric(part_accuracy))) %>%
+  mutate(accuracy_percentage = mean * 100)
+
+TP_descriptive_familiarity_overall_item <- dat %>%
+  drop_na(item_accuracy, familiarity_response, condition, part_accuracy) %>%
+  group_by(familiarity_response, item_accuracy) %>%
+  summarise(mean = mean(as.numeric(part_accuracy)), SD = sd(as.numeric(part_accuracy)), count = n(), se = (SD / (sqrt(count))), median = median(as.numeric(part_accuracy)), min = min(as.numeric(part_accuracy)), max = max(as.numeric(part_accuracy))) %>%
+  mutate(accuracy_percentage = mean * 100)
+
+TP_descriptive_familiarity_overall_time <- dat %>%
+  drop_na(item_accuracy, familiarity_response, condition, part_accuracy) %>%
+  group_by(familiarity_response, item_accuracy, condition) %>%
+  summarise(mean = mean(as.numeric(part_accuracy)), SD = sd(as.numeric(part_accuracy)), count = n(), se = (SD / (sqrt(count))), median = median(as.numeric(part_accuracy)), min = min(as.numeric(part_accuracy)), max = max(as.numeric(part_accuracy))) %>%
+  mutate(accuracy_percentage = mean * 100)
+
+
+# overall confidence summary stats condition
+TP_descriptive_familiarity_summary <- TP_descriptive_familiarity %>%
+  group_by(condition, item_accuracy, familiarity_response) %>%
+  summarise(mean = mean(accuracy_percentage), SD = sd(accuracy_percentage), count = n(), se = (SD / (sqrt(count))), median = median(accuracy_percentage), min = min(accuracy_percentage), max = max(accuracy_percentage)) %>%
+  rename_at(vars(-condition, -item_accuracy, -familiarity_response), ~ paste0(.x, "_overall_mean"))
+
+
+TP_descriptive_familiarity_plot <-
+  TP_descriptive_familiarity %>%
+  ggplot(aes(x = familiarity_response, y = accuracy_percentage, fill = item_accuracy)) +
+  ggdist::stat_halfeye(
+    # adjust = .5, 
+    width = .6, 
+    .width = 0, 
+    # justification = -.2, 
+    point_colour = NA,
+    alpha = .25,
+    position = position_nudge(x = +.1)
+  ) + 
+  geom_boxplot(
+    width = .1,
+    outlier.size = .25,
+    # outlier.shape = NA
+  ) +
+  ## add justified jitter from the {gghalves} package
+  gghalves::geom_half_point(
+    aes(
+      color = item_accuracy
+      ),
+    ## draw jitter on the left
+    side = "l", 
+    ## control range of jitter
+    range_scale = .5, 
+    ## add some transparency
+    alpha = .25,
+    size = .25,
+    # make overlap
+    position = position_nudge(x = -.01)
+  ) +
+  geom_pointrange(
+    dat = TP_descriptive_familiarity_summary,
+    aes(
+      y = mean_overall_mean,
+      ymin = mean_overall_mean - se_overall_mean,
+      ymax = mean_overall_mean + se_overall_mean,
+      color = item_accuracy
+    ),
+    size = .25,
+    position = position_nudge(x = +.2)
+  ) +
+  labs(x = "Familiarity", y = "Accuracy (%)") +
+    theme_apa(legend.use.title = FALSE) +
+    scale_fill_manual(values = c("#E69F00", "#56B4E9")) +
+    scale_color_manual(values = c("#E69F00", "#56B4E9")) +
+  ylim(0, 100) +
+  theme(text = element_text(size=15), plot.margin = margin(6, 0, 6, 0)) +
+  # theme(axis.text.y = element_text(angle = 90, hjust = 0.5)) +
+  # coord_flip() +
+  facet_wrap(~condition)
+
+
+TP_descriptive_familiarity_plot
+
+ggsave(file = here::here("Figures", "TP_familiarity.pdf"), plot = TP_descriptive_familiarity_plot)
+# ggsave(file="TP_familiarity.pdf", plot=TP_descriptive_familiarity_plot, width = 750, height = 750, units = c("px"), scale = 1)
+
+
+familiarity_response_plot <- TP_descriptive_familiarity_overall_time %>%
+    ggplot(aes(x = familiarity_response, y = count, fill = item_accuracy)) +
+    geom_bar(stat = "identity") +
+    theme_apa() +
+    theme(text = element_text(size=15)) +
+    labs(x = "Familiarity", y = "Count") +
+      scale_fill_manual(values = c("#E69F00", "#56B4E9")) +
+    scale_color_manual(values = c("#E69F00", "#56B4E9")) +
+  facet_wrap(~condition)
+
+ggsave(file = here::here("Figures", "familiarity_response.pdf"), plot = familiarity_response_plot, width = 7, height = 4.5)
+
+familiarity_response_plot
+
+
+```
+
+
+```{r combining first two predictor graphs into one image}
+
+# arrange the three plots in a single row
+prior_exposure_motivated_predictor_final_figures <- 
+  cowplot::plot_grid(
+  TP_descriptive_motivated_plot + theme(legend.position="none", text = element_text(size=15)),
+  TP_descriptive_familiarity_plot + theme(legend.position="none", text = element_text(size=15)),
+  # align = 'vh',
+  labels = c("A", "B"),
+  # hjust = -1,
+  nrow = 2
+)
+
+# extract a legend that is laid out horizontally
+legend_b <- get_legend(
+  TP_descriptive_motivated_plot + 
+    guides(color = guide_legend(nrow = 1)) +
+    theme(legend.position = "bottom")
+)
+
+# add the legend underneath the row we made earlier. Give it 10%
+# of the height of one plot (via rel_heights).
+prior_exposure_motivated_predictor_final_figures <- cowplot::plot_grid(prior_exposure_motivated_predictor_final_figures, legend_b, ncol = 1, rel_heights = c(1, .1))
+
+ggsave(file = here::here("Figures", "prior_exposure_motivated_predictor_final_figures.pdf"), 
+       plot = prior_exposure_motivated_predictor_final_figures,
+  width = 8,
+  height = 12
+  )
+
+
+```
+
+
+
+```{r combining graphs into one image}
+
+all_final_figures <- ggarrange(TP_descriptive_CRT_plot, TP_descriptive_congruency_plot, TP_descriptive_familiarity_plot, TP_descriptive_motivated_plot, ncol=2, nrow=2, common.legend = TRUE, legend="bottom")
+
+ggsave(file = here::here("Figures", "all_predictor_final_figures.pdf"), plot = all_final_figures, width = 10, height = 14)
+
+```
+
+
+
+# models
+```{r final models manuscript centralised - TP}
+# model with time pressure
+model.accuracy.time.bays <- brm(formula = accuracy_response ~ C_item_accuracy*CRT_standard*condition_num +
+                                  C_item_accuracy*C_congruency_non_binary*CRT_standard*condition_num +
+                                  C_item_accuracy*familiarity_response*condition_num +
+                                  (1 | ID) +
+                                  (1 | item_number),
+                                data = dat,
+                                family = bernoulli(link = "probit"),
+                                iter = 10000,
+                                cores = getOption("mc.cores", 4),
+                                file = here::here("Models",  "model"),
+                                )
+
+# summary
+# summary(model.accuracy.time.bays)
+
+# parameters
+# model_parameters <- c("b_Intercept",                                            
+# "b_C_item_accuracy",                                      
+# "b_CRT_standard",                                         
+# "b_condition_num1",                                          
+# "b_C_congruency_non_binary",                                         
+# "b_familiarity_responseYes",                              
+# "b_C_item_accuracy:CRT_standard",                         
+# "b_C_item_accuracy:condition_num1",                          
+# "b_CRT_standard:condition_num1",                             
+#  "b_C_item_accuracy:C_congruency_non_binary",                         
+#  "b_CRT_standard:C_congruency_non_binary",                            
+#  "b_condition_num1:C_congruency_non_binary",                             
+#  "b_C_item_accuracy:familiarity_responseYes",              
+#  "b_condition_num1:familiarity_responseYes",                  
+#  "b_C_item_accuracy:CRT_standard:condition_num1",             
+#  "b_C_item_accuracy:CRT_standard:C_congruency_non_binary",            
+#  "b_C_item_accuracy:condition_num1:C_congruency_non_binary",             
+#  "b_CRT_standard:condition_num1:C_congruency_non_binary",                
+#  "b_C_item_accuracy:condition_num1:familiarity_responseYes",  
+#  "b_C_item_accuracy:CRT_standard:condition_num1:C_congruency_non_binary")
+
+# mcmc_plot(model.accuracy.time.bays,
+#   type = "trace"
+#   # , variable = model_parameters[1:12]
+# )
+
+
+# mcmc_plot(model.accuracy.time.bays, type = "intervals")
+# mcmc_plot(model.accuracy.time.bays, type = "dens")
+
+
+###### Stuff added by Alan ######
+
+#The idea is to analyse the chains yourself.
+#Thus, first you get the draws
+draws <- posterior_samples(model.accuracy.time.bays)
+
+#Then, you calculate the new variables (there should be a better way, but this worked)
+draws <- draws %>% mutate(`b_condition_num1` = b_condition_num1 + b_Intercept,
+                 `b_CRT_standard:condition_num1` = `b_CRT_standard:condition_num1` + b_CRT_standard,
+                 `b_condition_num1:C_congruency_non_binary` = `b_condition_num1:C_congruency_non_binary` + b_C_congruency_non_binary, 
+                 `b_condition_num1:familiarity_responseYes` = `b_condition_num1:familiarity_responseYes` + b_familiarity_responseYes,
+                 `b_CRT_standard:condition_num1:C_congruency_non_binary` = `b_CRT_standard:condition_num1:C_congruency_non_binary` + `b_CRT_standard:C_congruency_non_binary`,
+                 
+                 `b_C_item_accuracy:condition_num1` = `b_C_item_accuracy:condition_num1` + b_C_item_accuracy,
+                 `b_C_item_accuracy:CRT_standard:condition_num1` = `b_C_item_accuracy:CRT_standard:condition_num1` + `b_C_item_accuracy:CRT_standard`,
+                 `b_C_item_accuracy:condition_num1:C_congruency_non_binary` = `b_C_item_accuracy:condition_num1:C_congruency_non_binary` + `b_C_item_accuracy:C_congruency_non_binary`,
+                 `b_C_item_accuracy:condition_num1:familiarity_responseYes` = `b_C_item_accuracy:condition_num1:familiarity_responseYes` + `b_C_item_accuracy:familiarity_responseYes`,
+                 `b_C_item_accuracy:CRT_standard:condition_num1:C_congruency_non_binary` = `b_C_item_accuracy:CRT_standard:condition_num1:C_congruency_non_binary` + `b_C_item_accuracy:CRT_standard:C_congruency_non_binary`)
+
+estimates <- apply(draws,2,mean)
+
+upper <- apply(draws,2,quantile,probs=0.975)
+lower <- apply(draws,2,quantile,probs=0.025)
+
+model_coefs <- data.frame(estimates,lower,upper) #the new coefficients
+
+# changing colnames
+model_coefs$predictor <- rownames(model_coefs)
+
+# removing b from names
+model_coefs$predictor <- str_replace_all(model_coefs$predictor, "b_", "")
+
+# shortening df
+model_coefs <- model_coefs[1:20,]
+rownames(model_coefs) <- seq(1, length(model_coefs$predictor), 1)
+
+
+# #E.g., the bias is stronger in control:
+# model_coefs["b_Intercept",]
+# model_coefs["b_condition_num1",]
+# 
+# #and d' is lower under time pressure:
+# model_coefs["b_C_item_accuracy",]
+# model_coefs["raw_d_tp",]
+
+
+###### END ######
+
+model.summary <- summary(model.accuracy.time.bays)
+# model.summary
+
+model_coefs_predictor <- model.summary[["fixed"]]
+# tmp <- model_coefs_predictor
+
+# changing colnames
+model_coefs_predictor$predictor <- rownames(model_coefs_predictor)
+
+# checking if predictors on model_coefs match model_coefs_predictor
+table(model_coefs_predictor$predictor == model_coefs$predictor)
+
+# adding additive to difference based output
+model_coefs_predictor <- model_coefs_predictor %>%
+  mutate(estimate_additive = model_coefs$estimates,
+    lower_additive = model_coefs$lower,
+    upper_additive = model_coefs$upper
+         )
+
+rownames(model_coefs_predictor) <- seq(1, length(model_coefs_predictor$estimate), 1)
+
+model_coefs_predictor$predictor <- str_replace_all(model_coefs_predictor$predictor, "C_", "")
+
+# changing accuracy item to d_prime
+model_coefs_predictor <- 
+  model_coefs_predictor %>% 
+  mutate(
+  predictor = str_replace_all(predictor, "item_accuracy", "d_prime"),
+  predictor = str_replace_all(predictor, "Intercept", "response_bias"),
+  predictor = str_replace_all(predictor, "condition_num1", "time_treat"),
+  predictor = str_replace_all(predictor, "CRT_standard", "CRT"),
+  predictor = str_replace_all(predictor, "familiarity_response", "familiarity"),
+  predictor = str_replace_all(predictor, "congruency_non_binary", "congruency")
+  )
+
+
+# adding response_bias to time_treat
+model_coefs_predictor$predictor[model_coefs_predictor$predictor == "time_treat"] <- "response_bias:time_treat"
+
+plot_levels <- c("d_prime", #d'
+                 "d_prime:time_treat", #tp on d'
+                 
+                 "response_bias", #c
+                 "response_bias:time_treat", #tp on c
+
+                 
+          "d_prime:CRT", #d'
+          "d_prime:CRT:time_treat", #tp on d'
+          "CRT", #c
+          "CRT:time_treat", #tp on c
+          
+          
+          "d_prime:congruency", #d'
+          "d_prime:time_treat:congruency", #tp on d'
+          "congruency", #ç
+          "time_treat:congruency", #tp on c
+          
+          
+          "d_prime:CRT:congruency", #d'
+          "d_prime:CRT:time_treat:congruency", #tp on d'
+          "CRT:congruency", #c
+          "CRT:time_treat:congruency", #tp on c
+          
+          
+          "d_prime:familiarityYes", #d'
+          "d_prime:time_treat:familiarityYes", #tp on d'
+          "familiarityYes", #c
+          "time_treat:familiarityYes" #tp on c
+          
+          )
+
+
+model_coefs_predictor <- model_coefs_predictor %>% rename(estimate = Estimate, lower = `l-95% CI`, upper = `u-95% CI`)
+
+# chagning class
+# model_coefs_predictor$predictor <- factor(model_coefs_predictor$predictor, levels = rev(plot_levels))
+
+
+model_coefs_predictor <- 
+  model_coefs_predictor %>% 
+  mutate(
+  SDT = ifelse(str_detect(predictor, "d_prime"), "d_prime", "Response Bias"),
+  Treatment = ifelse(str_detect(predictor, "time_treat") & str_detect(SDT, "d_prime"), "Time Pressure", 
+                 ifelse(str_detect(predictor, "time_treat") & str_detect(SDT, "Response Bias"), "Time Pressure", "Control")
+                 )
+  )
+
+
+# removing d_prime and time_treat from predictor
+model_coefs_predictor$predictor <- as.character(model_coefs_predictor$predictor)
+
+model_coefs_predictor$predictor[3:length(model_coefs_predictor$predictor)] <- str_replace(model_coefs_predictor$predictor[3:length(model_coefs_predictor$predictor)], "d_prime:", "")
+
+model_coefs_predictor$predictor[3:length(model_coefs_predictor$predictor)] <- str_replace(model_coefs_predictor$predictor[3:length(model_coefs_predictor$predictor)], ":d_prime", "")
+
+model_coefs_predictor$predictor[3:length(model_coefs_predictor$predictor)] <- str_replace(model_coefs_predictor$predictor[3:length(model_coefs_predictor$predictor)], "time_treat:", "")
+
+model_coefs_predictor$predictor[3:length(model_coefs_predictor$predictor)] <- str_replace(model_coefs_predictor$predictor[3:length(model_coefs_predictor$predictor)], ":time_treat", "")
+
+# the last time treat is d' time treat. 
+model_coefs_predictor$predictor <- str_replace(model_coefs_predictor$predictor, "time_treat", "d_prime")
+
+
+# adding baseline
+model_coefs_predictor$predictor <- str_replace_all(model_coefs_predictor$predictor, "d_prime", "baseline")
+model_coefs_predictor$predictor <- str_replace_all(model_coefs_predictor$predictor, "response_bias", "baseline")
+
+
+# changing to factor again
+model_coefs_predictor$predictor <- factor(model_coefs_predictor$predictor, levels = rev(c("baseline", "CRT", "congruency", "CRT:congruency",  "familiarityYes")))
+
+
+model_coefs_predictor$SDT <- str_replace_all(model_coefs_predictor$SDT, "d_prime", "Discrimination Ability")
+model_coefs_predictor$SDT <- factor(model_coefs_predictor$SDT, levels = c("Discrimination Ability", "Response Bias"))
+
+
+model_coefs_predictor$Treatment <- factor(model_coefs_predictor$Treatment, levels = c("Control", "Time Pressure"))
+  
+
+# plot
+model_coefs_predictor_plot <- model_coefs_predictor %>% 
+  ggplot(aes(x = predictor, y = estimate_additive, color = Treatment)) +
+   geom_hline(yintercept = 0, linetype="dotted", 
+                color = "grey", size=.25) +
+   geom_pointrange(aes(ymin = lower_additive,
+       ymax = upper_additive),
+       position = position_dodge(-0.5)) + 
+  labs(x= "Coefficients", y= "Estimates") +
+  scale_color_manual(values = c("black","darkgrey")) +
+  coord_flip() +
+  theme_apa() +
+  theme(legend.pos = "bottom", text = element_text(size=15)) +
+  facet_grid(~SDT, scales="free_y") 
+
+
+model_coefs_predictor_plot
+
+
+
+# plot_grid(model_coefs_predictor_plot_d, model_coefs_predictor_plot_c) 
+# prior_exposure_motivated_predictor_final_figures <- 
+  # ggarrange(model_coefs_predictor_plot_d, model_coefs_predictor_plot_c, ncol=1, nrow=2)
+
+# save plot
+ggsave(file = here::here("Figures", "regression_coeffs_plot.pdf"), plot = model_coefs_predictor_plot, width =7, height = 4.5)
+# model_coefs_predictor$estimate <- as.numeric(model_coefs_predictor$estimate)
+
+# saving models as tables
+# texreg(model.accuracy.time.bays, file = "model.manuscript.tex")
+
+# sjPlot::tab_model(model.criterion.bays, file = "model.accuracy.time.manuscript.NTP.doc")
+# sjPlot::tab_model(model.accuracy.time.bays, file = "model.accuracy.time.manuscript.TP.doc")
+# plot_model(model.criterion.bays, type = "re")
+```
+
+
+```{r final models manuscript centralised with familiarity centralised also - TP}
+# model with time pressure (through 1)
+model.accuracy.time.bays.familiar <- brm(accuracy_response ~
+                                           C_item_accuracy*CRT_standard*condition_num +
+                                           C_item_accuracy*C_congruency_non_binary*CRT_standard*condition_num +
+                                           C_item_accuracy*C_familiarity_response*condition_num +
+                                           (1 | ID) +
+                                           (1 | item_number),
+                                         data = dat,
+                                         family = bernoulli(link = "probit"),
+                                         iter = 10000,
+                                         cores = getOption("mc.cores", 4),
+                                         file = here::here("Models", "model.familiar.center")
+                                         )
+
+# summary
+# summary(model.accuracy.time.bays.familiar)
+
+# mcmc_plot(model.accuracy.time.bays.familiar,
+  # type = "trace"
+# )
+
+# mcmc_plot(model.accuracy.time.bays.familiar, type = "intervals")
+# mcmc_plot(model.accuracy.time.bays.familiar, type = "dens")
+
+
+###### Stuff added by Alan ######
+
+#The idea is to analyse the chains yourself.
+#Thus, first you get the draws
+draws.familiar <- posterior_samples(model.accuracy.time.bays.familiar)
+
+#Then, you calculate the new variables (there should be a better way, but this worked)
+draws.familiar <- draws.familiar %>% mutate(`b_condition_num1` = b_condition_num1 + b_Intercept,
+                 `b_CRT_standard:condition_num1` = `b_CRT_standard:condition_num1` + b_CRT_standard,
+                 `b_condition_num1:C_congruency_non_binary` = `b_condition_num1:C_congruency_non_binary` + b_C_congruency_non_binary, 
+                 `b_condition_num1:C_familiarity_response` = `b_condition_num1:C_familiarity_response` + b_C_familiarity_response,
+                 `b_CRT_standard:condition_num1:C_congruency_non_binary` = `b_CRT_standard:condition_num1:C_congruency_non_binary` + `b_CRT_standard:C_congruency_non_binary`,
+                 
+                 `b_C_item_accuracy:condition_num1` = `b_C_item_accuracy:condition_num1` + b_C_item_accuracy,
+                 `b_C_item_accuracy:CRT_standard:condition_num1` = `b_C_item_accuracy:CRT_standard:condition_num1` + `b_C_item_accuracy:CRT_standard`,
+                 `b_C_item_accuracy:condition_num1:C_congruency_non_binary` = `b_C_item_accuracy:condition_num1:C_congruency_non_binary` + `b_C_item_accuracy:C_congruency_non_binary`,
+                 `b_C_item_accuracy:condition_num1:C_familiarity_response` = `b_C_item_accuracy:condition_num1:C_familiarity_response` + `b_C_item_accuracy:C_familiarity_response`,
+                 `b_C_item_accuracy:CRT_standard:condition_num1:C_congruency_non_binary` = `b_C_item_accuracy:CRT_standard:condition_num1:C_congruency_non_binary` + `b_C_item_accuracy:CRT_standard:C_congruency_non_binary`)
+
+estimates.familiar <- apply(draws.familiar,2,mean)
+
+upper.familiar <- apply(draws.familiar,2,quantile,probs=0.975)
+lower.familiar <- apply(draws.familiar,2,quantile,probs=0.025)
+
+model_coefs.familiar <- data.frame(estimates.familiar,lower.familiar,upper.familiar) #the new coefficients
+
+# changing colnames
+model_coefs.familiar$predictor <- rownames(model_coefs.familiar)
+
+# removing b from names
+model_coefs.familiar$predictor <- str_replace_all(model_coefs.familiar$predictor, "b_", "")
+
+# shortening df
+model_coefs.familiar <- model_coefs.familiar[1:20,]
+rownames(model_coefs.familiar) <- seq(1, length(model_coefs.familiar$predictor), 1)
+
+
+# #E.g., the bias is stronger in control:
+# model_coefs.familiar["b_Intercept",]
+# model_coefs.familiar["b_condition_num1",]
+# 
+# #and d' is lower under time pressure:
+# model_coefs.familiar["b_C_item_accuracy",]
+# model_coefs.familiar["raw_d_tp",]
+
+
+###### END ######
+
+model.summary.familiar <- summary(model.accuracy.time.bays.familiar)
+# model.summary.familiar
+
+model_coefs_predictor.familiar <- model.summary.familiar[["fixed"]]
+# tmp <- model_coefs_predictor
+
+# changing colnames
+model_coefs_predictor.familiar$predictor <- rownames(model_coefs_predictor.familiar)
+
+# checking if predictors on model_coefs match model_coefs_predictor
+table(model_coefs_predictor.familiar$predictor == model_coefs.familiar$predictor)
+
+# adding additive to difference based output
+model_coefs_predictor.familiar <- model_coefs_predictor.familiar %>%
+  mutate(estimate_additive = model_coefs.familiar$estimates,
+    lower_additive = model_coefs.familiar$lower,
+    upper_additive = model_coefs.familiar$upper
+         )
+
+rownames(model_coefs_predictor.familiar) <- seq(1, length(model_coefs_predictor.familiar$estimate), 1)
+
+model_coefs_predictor.familiar$predictor <- str_replace_all(model_coefs_predictor.familiar$predictor, "C_", "")
+
+# changing accuracy item to d_prime
+model_coefs_predictor.familiar <- 
+  model_coefs_predictor.familiar %>% 
+  mutate(
+  predictor = str_replace_all(predictor, "item_accuracy", "d_prime"),
+  predictor = str_replace_all(predictor, "Intercept", "response_bias"),
+  predictor = str_replace_all(predictor, "condition_num1", "time_treat"),
+  predictor = str_replace_all(predictor, "CRT_standard", "CRT"),
+  predictor = str_replace_all(predictor, "familiarity_response", "familiarity"),
+  predictor = str_replace_all(predictor, "congruency_non_binary", "congruency")
+  )
+
+# adding response_bias to time_treat
+model_coefs_predictor.familiar$predictor[model_coefs_predictor.familiar$predictor == "time_treat"] <- "response_bias:time_treat"
+
+plot_levels <- c("d_prime", #d'
+                 "d_prime:time_treat", #tp on d'
+                 
+                 "response_bias", #c
+                 "response_bias:time_treat", #tp on c
+
+                 
+          "d_prime:CRT", #d'
+          "d_prime:CRT:time_treat", #tp on d'
+          "CRT", #c
+          "CRT:time_treat", #tp on c
+          
+          
+          "d_prime:congruency", #d'
+          "d_prime:time_treat:congruency", #tp on d'
+          "congruency", #ç
+          "time_treat:congruency", #tp on c
+          
+          
+          "d_prime:CRT:congruency", #d'
+          "d_prime:CRT:time_treat:congruency", #tp on d'
+          "CRT:congruency", #c
+          "CRT:time_treat:congruency", #tp on c
+          
+          
+          "d_prime:familiarity", #d'
+          "d_prime:time_treat:familiarity", #tp on d'
+          "familiarity", #c
+          "time_treat:familiarity" #tp on c
+          
+          )
+
+
+model_coefs_predictor.familiar <- model_coefs_predictor.familiar %>% rename(estimate = Estimate, lower = `l-95% CI`, upper = `u-95% CI`)
+
+# chagning class
+# model_coefs_predictor.familiar$predictor <- factor(model_coefs_predictor.familiar$predictor, levels = rev(plot_levels))
+
+model_coefs_predictor.familiar <- 
+  model_coefs_predictor.familiar %>% 
+  mutate(
+  SDT = ifelse(str_detect(predictor, "d_prime"), "d_prime", "Response Bias"),
+  Treatment = ifelse(str_detect(predictor, "time_treat") & str_detect(SDT, "d_prime"), "Time Pressure", 
+                 ifelse(str_detect(predictor, "time_treat") & str_detect(SDT, "Response Bias"), "Time Pressure", "Control"))
+  )
+
+# removing d_prime and time_treat from predictor
+model_coefs_predictor.familiar$predictor <- as.character(model_coefs_predictor.familiar$predictor)
+
+model_coefs_predictor.familiar$predictor[3:length(model_coefs_predictor.familiar$predictor)] <- str_replace(model_coefs_predictor.familiar$predictor[3:length(model_coefs_predictor.familiar$predictor)], "d_prime:", "")
+
+model_coefs_predictor.familiar$predictor[3:length(model_coefs_predictor.familiar$predictor)] <- str_replace(model_coefs_predictor.familiar$predictor[3:length(model_coefs_predictor.familiar$predictor)], ":d_prime", "")
+
+model_coefs_predictor.familiar$predictor[3:length(model_coefs_predictor.familiar$predictor)] <- str_replace(model_coefs_predictor.familiar$predictor[3:length(model_coefs_predictor.familiar$predictor)], "time_treat:", "")
+
+model_coefs_predictor.familiar$predictor[3:length(model_coefs_predictor.familiar$predictor)] <- str_replace(model_coefs_predictor.familiar$predictor[3:length(model_coefs_predictor.familiar$predictor)], ":time_treat", "")
+
+# the last time treat is d' time treat. 
+model_coefs_predictor.familiar$predictor <- str_replace(model_coefs_predictor.familiar$predictor, "time_treat", "d_prime")
+
+
+# adding baseline
+model_coefs_predictor.familiar$predictor <- str_replace_all(model_coefs_predictor.familiar$predictor, "d_prime", "baseline")
+model_coefs_predictor.familiar$predictor <- str_replace_all(model_coefs_predictor.familiar$predictor, "response_bias", "baseline")
+
+
+# changing to factor again
+model_coefs_predictor.familiar$predictor <- factor(model_coefs_predictor.familiar$predictor, levels = rev(c("baseline", "CRT", "congruency", "CRT:congruency",  "familiarity")))
+
+model_coefs_predictor.familiar$SDT <- str_replace_all(model_coefs_predictor.familiar$SDT, "d_prime", "Discrimination Ability")
+model_coefs_predictor.familiar$SDT <- factor(model_coefs_predictor.familiar$SDT, c("Discrimination Ability", "Response Bias"))
+
+model_coefs_predictor.familiar$Treatment <- factor(model_coefs_predictor.familiar$Treatment, levels = c("Control", "Time Pressure"))
+
+
+# plot
+model_coefs_predictor_plot.familiar <- model_coefs_predictor.familiar %>% 
+  ggplot(aes(x = predictor, y = estimate_additive, color = Treatment)) +
+   geom_hline(yintercept = 0, linetype="dotted", 
+                color = "grey", size=.25) +
+   geom_pointrange(aes(ymin = lower_additive,
+       ymax = upper_additive),
+       position = position_dodge(-0.5)) + 
+  labs(x= "Coefficients", y= "Estimates") +
+  scale_color_manual(values = c("black","darkgrey")) +
+  coord_flip() +
+  theme_apa() +
+  theme(legend.pos = "bottom", text = element_text(size=15)) +
+  facet_grid(~SDT, scales="free_y") 
+
+# theme(text = element_text(size=10))
+
+model_coefs_predictor_plot.familiar
+
+
+# save plot
+ggsave(file = here::here("Figures", "regression_coeffs_plot.familiar.pdf"), plot = model_coefs_predictor_plot.familiar, width = 7, height = 4.5)
+
+
+# saving models as tables
+# texreg(model.accuracy.time.bays.familiar, file = "model.accuracy.time.manuscript.TP.tex")
+
+# sjPlot::tab_model(model.criterion.bays, file = "model.accuracy.time.manuscript.NTP.doc")
+# sjPlot::tab_model(model.accuracy.time.bays.familiar, file = "model.accuracy.time.manuscript.TP.doc")
+# plot_model(model.criterion.bays, type = "re")
+```
+
+
+
