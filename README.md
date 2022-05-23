@@ -3,7 +3,6 @@
 This repository includes project files to replicate the above titled project (not fully updated yet).
 
 Here is how it is structured:
-- R project folder
   - Misinformation and Time Pressure.Rproj (R project file to be used when working with R on this project)
   - Analysis script (all analyses happen here)
   - Making dataset script (script to clean dataset and prepare for analysis)
@@ -17,4 +16,5 @@ Here is how it is structured:
   - True folder
   - False folder
   - Labelled folder (not yet added, files too large)
+- Experiment Screenshots
 
