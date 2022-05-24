@@ -1,0 +1,25 @@
+knitr::opts_chunk$set(echo = TRUE)
+# sometimes tidy doesn't load
+# remove.packages("rlang")
+# install.packages("rlang")
+# loading libraries
+library(here)
+library(readxl)
+library(tidyverse)
+library(jtools)
+# library(LaCroixColoR)
+library(ggpubr)
+# library(scales)
+# model
+# library(lme4)
+library(GGally)
+library(brms)
+# library(sjPlot)
+library(emmeans)
+library(multcomp)
+library(rstatix)
+library(texreg)
+# The palette with grey:
+cbPalette <- c("#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+# dat
+dat <- read_excel(here::here("Data", "Clean", "cleaned_data.xlsx"))

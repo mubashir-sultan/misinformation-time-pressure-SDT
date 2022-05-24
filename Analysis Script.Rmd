@@ -2174,7 +2174,7 @@ model.accuracy.time.bays <- brm(formula = accuracy_response ~ C_item_accuracy*CR
                                   (1 | item_number),
                                 data = dat,
                                 family = bernoulli(link = "probit"),
-                                iter = 10000,
+                                iter = 10000, 
                                 cores = getOption("mc.cores", 4),
                                 file = here::here("Models",  "model"),
                                 )
